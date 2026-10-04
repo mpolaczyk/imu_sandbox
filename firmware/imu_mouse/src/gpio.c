@@ -28,14 +28,14 @@ static void s_gpio_thread_fn(void *p1, void *p2, void *p3)
 		case IM_APP_STATE_INIT_2:
 			if(previous_state == IM_APP_STATE_INIT_1)
 			{
-				im_gpio_led_set_all(0, 1, 0);
+				im_gpio_led_set_only(IM_GPIO_LED_GREEN);
 			}
 			break;
 
 		case IM_APP_STATE_RUNNING:
 			if(previous_state == IM_APP_STATE_INIT_2)
 			{
-				im_gpio_led_set_all(0, 0, 1);
+				im_gpio_led_set_only(IM_GPIO_LED_BLUE);
 			}
 			if (!im_gpio_led_toggle(IM_GPIO_LED_BLUE))
 			{
@@ -44,7 +44,7 @@ static void s_gpio_thread_fn(void *p1, void *p2, void *p3)
 			break;
 
 		case IM_APP_STATE_FAIL:
-			im_gpio_led_set_all(1, 0, 0);
+			im_gpio_led_set_only(IM_GPIO_LED_RED);
 			break;
 
 		default:
@@ -92,31 +92,38 @@ bool im_gpio_init()
 	return true;
 }
 
-bool im_gpio_led_toggle(enum im_gpio_led index)
+bool im_gpio_led_toggle(unsigned int leds)
 {
-	if (gpio_pin_toggle_dt(&s_leds[(int)index]) < 0) 
+	bool result = true;
+	for (size_t i = 0; i < ARRAY_SIZE(s_leds); i++)
 	{
-		printk("Error: GPIO Unable to toggle led {%d}\n", (int)index);
-		return false;
+		if ((leds & BIT(i)) && gpio_pin_toggle_dt(&s_leds[i]) < 0)
+		{
+			printk("Error: GPIO Unable to toggle led {%d}\n", (int)i);
+			result = false;
+		}
 	}
-	return true;
-}
-
-bool im_gpio_led_set(enum im_gpio_led index, int value)
-{
-	if (gpio_pin_set_dt(&s_leds[(int)index], value) < 0)
-	{
-		printk("Error: GPIO Unable to set led {%d} to value {%d}\n", (int)index, value);
-		return false;
-	}
-	return true;
-}
-
-bool im_gpio_led_set_all(int value_red, int value_green, int value_blue)
-{
-	bool result = false;
-	result |= im_gpio_led_set(IM_GPIO_LED_RED, value_red);
-	result |= im_gpio_led_set(IM_GPIO_LED_GREEN, value_green);
-	result |= im_gpio_led_set(IM_GPIO_LED_BLUE, value_blue);
 	return result;
+}
+
+bool im_gpio_led_set(unsigned int leds, int value)
+{
+	bool result = true;
+	for (size_t i = 0; i < ARRAY_SIZE(s_leds); i++)
+	{
+		if ((leds & BIT(i)) && gpio_pin_set_dt(&s_leds[i], value) < 0)
+		{
+			printk("Error: GPIO Unable to set led {%d} to value {%d}\n", (int)i, value);
+			result = false;
+		}
+	}
+	return result;
+}
+
+bool im_gpio_led_set_only(unsigned int value)
+{
+	const unsigned int all = IM_GPIO_LED_RED | IM_GPIO_LED_GREEN | IM_GPIO_LED_BLUE;
+	const bool result_on = im_gpio_led_set(value & all, 1);
+	const bool result_off = im_gpio_led_set(~value & all, 0);
+	return result_on && result_off;
 }
