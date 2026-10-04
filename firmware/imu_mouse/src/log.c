@@ -26,7 +26,6 @@ static void s_log_thread_fn(void *p1, void *p2, void *p3)
 
 void im_log_thread_start()
 {
-    log_flush();
 	k_tid_t tid = k_thread_create(&s_log_thread_data, s_log_thread_stack,
 				      K_THREAD_STACK_SIZEOF(s_log_thread_stack),
 				      s_log_thread_fn, NULL, NULL, NULL,

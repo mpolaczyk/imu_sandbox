@@ -1,3 +1,12 @@
 &lsm6ds3tr_c {
+	// Skip boot-time init (timing issue):
+	// 	<dbg> LSM6DSL: lsm6dsl_init_chip: failed to reboot device
+	// 	<err> LSM6DSL: Failed to initialize chip
+	// im_imu_init() calls device_init() later
 	zephyr,deferred-init;
+};
+
+&board_cdc_acm_uart {
+	// Without it poll_out drops data when the 1 KB TX ring buffer is full, losing early logs
+	hw-flow-control;
 };
