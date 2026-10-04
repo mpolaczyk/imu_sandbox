@@ -31,8 +31,6 @@ bool im_usb_init()
         }
     }
 #endif
-	k_msleep(50);
 	printk("USB Ok, attemps: %d\n", count);
-	log_flush(); // Flush all logs collected so far, this should print to USB terminal
 	return true;
 }
