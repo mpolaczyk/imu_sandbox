@@ -8,7 +8,9 @@ enum im_gpio_led
     IM_GPIO_LED_BLUE
 };
 
+void im_gpio_thread_start(void);
 bool im_gpio_init(void);
+
 bool im_gpio_led_toggle(enum im_gpio_led index);
 bool im_gpio_led_set(enum im_gpio_led index, int value);
 bool im_gpio_led_set_all(int value_red, int value_green, int value_blue);

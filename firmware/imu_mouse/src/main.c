@@ -5,55 +5,50 @@
 #include "imu.h"
 #include "usb.h"
 #include "log.h"
+#include "state.h"
 
 #define SLEEP_TIME_MS 100
 
-enum im_app_state
-{
-	IM_APP_STATE_INIT_1,
-	IM_APP_STATE_INIT_2,
-	IM_APP_STATE_RUNNING,
-	IM_APP_STATE_FAIL
-};
-
 int main(void)
 {
-	enum im_app_state state = IM_APP_STATE_INIT_1;
 	while (1) 
 	{
-		switch (state)
+		switch (im_state_get())
 		{
 		case IM_APP_STATE_INIT_1:
-			state = im_gpio_init() ? IM_APP_STATE_INIT_2 : IM_APP_STATE_FAIL;
+			if(im_gpio_init())
+			{
+				im_gpio_thread_start();
+				im_state_set(IM_APP_STATE_INIT_2);
+				break;
+			}
+			im_state_set(IM_APP_STATE_FAIL);
 			break;
 
 		case IM_APP_STATE_INIT_2:
-			im_gpio_led_set_all(0, 1, 0);
 			if(im_usb_init())
 			{
 				im_log_thread_start();
 				if(im_imu_init(true, true))
 				{
-					state = IM_APP_STATE_RUNNING;
-					im_gpio_led_set_all(0, 0, 1);
+					im_state_set(IM_APP_STATE_RUNNING);
 					break;
 				}
 			}
-			state = IM_APP_STATE_FAIL;
+			im_state_set(IM_APP_STATE_FAIL);
 			break;
 
 		case IM_APP_STATE_RUNNING:
-			if(!im_gpio_led_toggle(IM_GPIO_LED_BLUE) || !im_imu_collect(true))
+			if(im_imu_collect(true))
 			{
-				state = IM_APP_STATE_FAIL;
+				k_sleep(K_MSEC(SLEEP_TIME_MS));
 				break;
 			}
-			k_sleep(K_MSEC(SLEEP_TIME_MS));
+			im_state_set(IM_APP_STATE_FAIL);
 			break;
 
 		case IM_APP_STATE_FAIL:
-			im_gpio_led_set_all(1, 0, 0);
-			return -1;
+			return -1; // GPIO thread shows the failure LED
 		}
 	}
 }
