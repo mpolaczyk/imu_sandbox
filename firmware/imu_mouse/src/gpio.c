@@ -19,25 +19,20 @@ static void s_gpio_thread_fn(void *p1, void *p2, void *p3)
 	ARG_UNUSED(p1);
 	ARG_UNUSED(p2);
 	ARG_UNUSED(p3);
-	static enum im_app_state previous_state = IM_APP_STATE_INIT_1;
 	while (1)
 	{
 		enum im_app_state state = im_state_get();
 		switch (state)
 		{
 		case IM_APP_STATE_INIT_2:
-			if(previous_state == IM_APP_STATE_INIT_1)
+			if (!im_gpio_led_toggle_only(IM_GPIO_LED_GREEN))
 			{
-				im_gpio_led_set_only(IM_GPIO_LED_GREEN);
+				im_state_set(IM_APP_STATE_FAIL);
 			}
 			break;
 
 		case IM_APP_STATE_RUNNING:
-			if(previous_state == IM_APP_STATE_INIT_2)
-			{
-				im_gpio_led_set_only(IM_GPIO_LED_BLUE);
-			}
-			if (!im_gpio_led_toggle(IM_GPIO_LED_BLUE))
+			if (!im_gpio_led_toggle_only(IM_GPIO_LED_BLUE))
 			{
 				im_state_set(IM_APP_STATE_FAIL);
 			}
@@ -50,7 +45,6 @@ static void s_gpio_thread_fn(void *p1, void *p2, void *p3)
 		default:
 			break;
 		}
-		previous_state = state;
 		k_msleep(GPIO_THREAD_PERIOD_MS);
 	}
 }
@@ -120,10 +114,18 @@ bool im_gpio_led_set(unsigned int leds, int value)
 	return result;
 }
 
-bool im_gpio_led_set_only(unsigned int value)
+bool im_gpio_led_set_only(unsigned int leds)
 {
-	const unsigned int all = IM_GPIO_LED_RED | IM_GPIO_LED_GREEN | IM_GPIO_LED_BLUE;
-	const bool result_on = im_gpio_led_set(value & all, 1);
-	const bool result_off = im_gpio_led_set(~value & all, 0);
+	const unsigned int all = 0xffffu;
+	const bool result_on = im_gpio_led_set(leds & all, 1);
+	const bool result_off = im_gpio_led_set(~leds & all, 0);
 	return result_on && result_off;
+}
+
+bool im_gpio_led_toggle_only(unsigned int leds)
+{
+	const unsigned int all = 0xffffu;
+	const bool result_off = im_gpio_led_set(~leds & all, 0);
+	const bool result_toggle = im_gpio_led_toggle(leds & all);
+	return result_off && result_toggle;
 }

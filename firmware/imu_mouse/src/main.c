@@ -29,10 +29,13 @@ int main(void)
 			if(im_usb_init())
 			{
 				im_log_thread_start();
-				if(im_imu_init(true, true) && im_imu_thread_start())
+				if(im_imu_init(true, true))
 				{
-					im_state_set(IM_APP_STATE_RUNNING);
-					break;
+					im_state_set(IM_APP_STATE_RUNNING); // Before the IMU thread starts, so it can set FAIL afterwards
+					if(im_imu_thread_start())
+					{
+						break;
+					}
 				}
 			}
 			im_state_set(IM_APP_STATE_FAIL);
