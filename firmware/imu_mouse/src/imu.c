@@ -57,7 +57,7 @@ bool im_imu_thread_start()
 	k_tid_t tid = k_thread_create(&s_imu_thread_data, s_imu_thread_stack,
 				      K_THREAD_STACK_SIZEOF(s_imu_thread_stack),
 				      s_imu_thread_fn, NULL, NULL, NULL,
-				      IM_IMU_THREAD_PRIORITY, 0, K_NO_WAIT);
+				      IM_IMU_THREAD_PRIORITY, IM_IMU_THREAD_OPTIONS, K_NO_WAIT);
 	k_thread_name_set(tid, "imu");
 	k_sem_give(&s_imu_data_ready);
 	return true;
@@ -123,9 +123,9 @@ bool im_imu_collect(const bool do_print)
 	if(do_print)
 	{
 		char out_str[64];
-		sprintf(out_str, "accel x:%f ms/2 y:%f ms/2 z:%f ms/2", sensor_value_to_double(&s_accel[0]), sensor_value_to_double(&s_accel[1]), sensor_value_to_double(&s_accel[2]));
+		sprintf(out_str, "accel x:%f ms/2 y:%f ms/2 z:%f ms/2", sensor_value_to_float(&s_accel[0]), sensor_value_to_float(&s_accel[1]), sensor_value_to_float(&s_accel[2]));
 		printk("%s\n", out_str);
-		sprintf(out_str, "gyro x:%f dps y:%f dps z:%f dps", sensor_value_to_double(&s_gyro[0]), sensor_value_to_double(&s_gyro[1]), sensor_value_to_double(&s_gyro[2]));
+		sprintf(out_str, "gyro x:%f dps y:%f dps z:%f dps", sensor_value_to_float(&s_gyro[0]), sensor_value_to_float(&s_gyro[1]), sensor_value_to_float(&s_gyro[2]));
 		printk("%s\n", out_str);
 	}
 	return true;
