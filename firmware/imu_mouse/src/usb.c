@@ -8,7 +8,7 @@
 
 #include "usb.h"
 
-#define USB_WAIT_FOR_DTR 1 // 0: do not block until a USB terminal connects
+#define USB_WAIT_FOR_DTR 0 // 0: do not block until a USB terminal connects
 
 bool im_usb_init()
 {

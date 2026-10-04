@@ -2,10 +2,17 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/sensor.h>
+#include <zephyr/drivers/i2c.h>
 
 #include "imu.h"
 #include "state.h"
 #include "threads.h"
+
+#define PRINT_MEASUREMENT false
+
+#define IMU_REG_WHO_AM_I 0x0F
+#define IMU_READY_TIMEOUT_MS 2000
+#define IMU_READY_POLL_MS 5
 
 // Internal linkage
 
@@ -32,12 +39,36 @@ static void s_imu_thread_fn(void *p1, void *p2, void *p3)
 	while (1)
 	{
 		k_sem_take(&s_imu_data_ready, K_FOREVER);
-		if (!im_imu_collect(true))
+		if (!im_imu_collect(PRINT_MEASUREMENT))
 		{
 			im_state_set(IM_APP_STATE_FAIL);
 			return;
 		}
 	}
+}
+
+static bool s_imu_wait_ready(void)
+{
+	// The driver init fails for good if the chip does not ACK yet, so probe first
+	static const struct i2c_dt_spec bus = I2C_DT_SPEC_GET(DT_NODELABEL(lsm6ds3tr_c));
+	uint8_t who_am_i;
+	if (!i2c_is_ready_dt(&bus))
+	{
+		printk("Error: IMU I2C bus is not ready\n");
+		return false;
+	}
+	const int64_t start = k_uptime_get();
+	while (i2c_reg_read_byte_dt(&bus, IMU_REG_WHO_AM_I, &who_am_i) < 0)
+	{
+		if (k_uptime_get() - start > IMU_READY_TIMEOUT_MS)
+		{
+			printk("Error: IMU does not respond on I2C\n");
+			return false;
+		}
+		k_msleep(IMU_READY_POLL_MS);
+	}
+	printk("IMU responded on I2C after %d ms, who_am_i=0x%x\n", (int)(k_uptime_get() - start), who_am_i);
+	return true;
 }
 
 // External linkage
@@ -74,6 +105,10 @@ bool im_imu_init(const bool delay_init, const bool configure_sampling)
 	if(delay_init)
 	{
 		// Delayed init is implemented because normal init does not work (timing)
+		if (!s_imu_wait_ready())
+		{
+			return false;
+		}
 		printk("IMU Manual delayed initialization\n");
     	const int err = device_init(s_imu);
     	if (err)
