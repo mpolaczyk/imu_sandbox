@@ -5,13 +5,11 @@
 
 #include "imu.h"
 #include "state.h"
-
-#define IMU_THREAD_STACK_SIZE 2048
-#define IMU_THREAD_PRIORITY K_HIGHEST_APPLICATION_THREAD_PRIO // Cooperative: only ISRs preempt it
+#include "threads.h"
 
 // Internal linkage
 
-static K_THREAD_STACK_DEFINE(s_imu_thread_stack, IMU_THREAD_STACK_SIZE);
+static K_THREAD_STACK_DEFINE(s_imu_thread_stack, IM_IMU_THREAD_STACK_SIZE);
 static struct k_thread s_imu_thread_data;
 static K_SEM_DEFINE(s_imu_data_ready, 0, 1);
 
@@ -59,7 +57,7 @@ bool im_imu_thread_start()
 	k_tid_t tid = k_thread_create(&s_imu_thread_data, s_imu_thread_stack,
 				      K_THREAD_STACK_SIZEOF(s_imu_thread_stack),
 				      s_imu_thread_fn, NULL, NULL, NULL,
-				      IMU_THREAD_PRIORITY, 0, K_NO_WAIT);
+				      IM_IMU_THREAD_PRIORITY, 0, K_NO_WAIT);
 	k_thread_name_set(tid, "imu");
 	k_sem_give(&s_imu_data_ready);
 	return true;

@@ -6,8 +6,7 @@
 #include "usb.h"
 #include "log.h"
 #include "state.h"
-
-#define SLEEP_TIME_MS 100
+#include "threads.h"
 
 int main(void)
 {
@@ -42,7 +41,7 @@ int main(void)
 			break;
 
 		case IM_APP_STATE_RUNNING:
-			k_sleep(K_MSEC(SLEEP_TIME_MS));
+			k_sleep(K_MSEC(IM_MAIN_THREAD_PERIOD_MS));
 			break;
 
 		case IM_APP_STATE_FAIL:

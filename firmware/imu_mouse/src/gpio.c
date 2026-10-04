@@ -4,14 +4,11 @@
 
 #include "gpio.h"
 #include "state.h"
-
-#define GPIO_THREAD_STACK_SIZE 512
-#define GPIO_THREAD_PRIORITY K_LOWEST_APPLICATION_THREAD_PRIO
-#define GPIO_THREAD_PERIOD_MS 100
+#include "threads.h"
 
 // Internal linkage
 
-static K_THREAD_STACK_DEFINE(s_gpio_thread_stack, GPIO_THREAD_STACK_SIZE);
+static K_THREAD_STACK_DEFINE(s_gpio_thread_stack, IM_GPIO_THREAD_STACK_SIZE);
 static struct k_thread s_gpio_thread_data;
 
 static void s_gpio_thread_fn(void *p1, void *p2, void *p3)
@@ -45,7 +42,7 @@ static void s_gpio_thread_fn(void *p1, void *p2, void *p3)
 		default:
 			break;
 		}
-		k_msleep(GPIO_THREAD_PERIOD_MS);
+		k_msleep(IM_GPIO_THREAD_PERIOD_MS);
 	}
 }
 
@@ -63,7 +60,7 @@ void im_gpio_thread_start()
 	k_tid_t tid = k_thread_create(&s_gpio_thread_data, s_gpio_thread_stack,
 				      K_THREAD_STACK_SIZEOF(s_gpio_thread_stack),
 				      s_gpio_thread_fn, NULL, NULL, NULL,
-				      GPIO_THREAD_PRIORITY, 0, K_NO_WAIT);
+				      IM_GPIO_THREAD_PRIORITY, 0, K_NO_WAIT);
 	k_thread_name_set(tid, "gpio");
 }
 
