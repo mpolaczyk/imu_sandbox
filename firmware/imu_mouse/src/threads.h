@@ -8,7 +8,7 @@
 #define IM_IMU_THREAD_PRIORITY K_HIGHEST_APPLICATION_THREAD_PRIO
 
 // Main thread - Preemptible: runs at CONFIG_MAIN_THREAD_PRIORITY, preempted by the IMU thread
-#define IM_MAIN_THREAD_PERIOD_MS 100
+#define IM_MAIN_THREAD_PERIOD_MS 500
 
 // GPIO thread - Preemptible: lowest priority, runs only when other threads are blocked
 #define IM_GPIO_THREAD_STACK_SIZE 512
