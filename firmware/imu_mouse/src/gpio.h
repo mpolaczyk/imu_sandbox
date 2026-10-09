@@ -15,6 +15,7 @@ bool im_gpio_init(void);
 /* Called from the system workqueue after a debounced press of button 1. */
 typedef void (*im_gpio_button_cb_t)(void);
 bool im_gpio_button_init(im_gpio_button_cb_t cb);
+bool im_gpio_button_is_pressed(void);
 
 bool im_gpio_led_toggle(unsigned int leds);
 bool im_gpio_led_set(unsigned int leds, int value);

@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Vector2, Vector3 } from 'three'
+import { Euler, MathUtils, Quaternion, Vector2, Vector3 } from 'three'
 import './App.css'
 import { ema } from './math/filters'
 import { createScreen, forwardVector, intersectNoseRayWithScreen } from './math/headPointer'
 import { headQuaternion } from './math/orientation'
+import { BlePoseClient, type PosePacket, type PoseStats } from './ble/ble-client'
 import { SimulatorScene } from './scene/SimulatorScene'
 import { applyCalibration, type Angles } from './simulation/calibration'
+import { BleControls } from './ui/BleControls'
 import { ControlPanel } from './ui/ControlPanel'
 import { Diagnostics } from './ui/Diagnostics'
 import { ScreenPreview } from './ui/ScreenPreview'
@@ -15,19 +17,69 @@ const DEFAULT_DISTANCE_M = 0.6
 const DEFAULT_SMOOTHING_ALPHA = 0.22
 const DEFAULT_CURSOR = new Vector2(0.5, 0.5)
 const NOSE_ORIGIN = new Vector3(0, 0, 0)
+const DEFAULT_POSE_STATS: PoseStats = { packetRate: 0, droppedPackets: 0 }
+
+function quaternionToAngles(quaternion: Quaternion): Angles {
+  const euler = new Euler().setFromQuaternion(quaternion, 'YXZ')
+  return {
+    yawDeg: MathUtils.radToDeg(euler.y),
+    pitchDeg: -MathUtils.radToDeg(euler.x),
+    rollDeg: MathUtils.radToDeg(euler.z),
+  }
+}
 
 function App() {
+  const client = useMemo(() => new BlePoseClient(), [])
   const [angles, setAngles] = useState<Angles>(DEFAULT_ANGLES)
   const [distanceM, setDistanceM] = useState(DEFAULT_DISTANCE_M)
   const [smoothingAlpha, setSmoothingAlpha] = useState(DEFAULT_SMOOTHING_ALPHA)
   const [calibration, setCalibration] = useState<Angles>(DEFAULT_ANGLES)
   const [smoothedCursor, setSmoothedCursor] = useState(() => DEFAULT_CURSOR.clone())
+  const [inputSource, setInputSource] = useState<'simulated' | 'ble'>('simulated')
+  const [livePose, setLivePose] = useState<PosePacket | null>(null)
+  const [liveReference, setLiveReference] = useState(() => new Quaternion())
+  const [bleConnected, setBleConnected] = useState(false)
+  const [bleStats, setBleStats] = useState(DEFAULT_POSE_STATS)
+  const [bleError, setBleError] = useState('')
 
-  const effectiveAngles = useMemo(() => applyCalibration(angles, calibration), [angles, calibration])
+  useEffect(() => {
+    const unsubscribePose = client.onPose((pose, stats) => {
+      setLivePose(pose)
+      setBleStats(stats)
+    })
+    const unsubscribeConnect = client.onConnect(() => {
+      setBleConnected(true)
+      setBleError('')
+    })
+    const unsubscribeDisconnect = client.onDisconnect(() => setBleConnected(false))
+    const unsubscribeError = client.onError((error) => setBleError(error.message))
+    return () => {
+      unsubscribePose()
+      unsubscribeConnect()
+      unsubscribeDisconnect()
+      unsubscribeError()
+      client.disconnect()
+    }
+  }, [client])
+
+  const liveOrientation = useMemo(() => {
+    if (!livePose?.orientationValid) {
+      return null
+    }
+    const deviceOrientation = new Quaternion(...livePose.quaternion)
+    return liveReference.clone().invert().multiply(deviceOrientation).normalize()
+  }, [livePose, liveReference])
+  const effectiveAngles = useMemo(
+    () => (inputSource === 'ble' && liveOrientation ? quaternionToAngles(liveOrientation) : applyCalibration(angles, calibration)),
+    [inputSource, liveOrientation, angles, calibration],
+  )
   const screen = useMemo(() => createScreen({ distanceM }), [distanceM])
   const orientation = useMemo(
-    () => headQuaternion(effectiveAngles.yawDeg, effectiveAngles.pitchDeg, effectiveAngles.rollDeg),
-    [effectiveAngles],
+    () =>
+      inputSource === 'ble' && liveOrientation
+        ? liveOrientation
+        : headQuaternion(effectiveAngles.yawDeg, effectiveAngles.pitchDeg, effectiveAngles.rollDeg),
+    [inputSource, liveOrientation, effectiveAngles],
   )
   const rawHit = useMemo(
     () => intersectNoseRayWithScreen(NOSE_ORIGIN, orientation, screen),
@@ -52,7 +104,11 @@ function App() {
   }, [rawCursor, smoothingAlpha])
 
   const handleCalibrate = () => {
-    setCalibration(angles)
+    if (inputSource === 'ble' && livePose) {
+      setLiveReference(new Quaternion(...livePose.quaternion))
+    } else {
+      setCalibration(angles)
+    }
     setSmoothedCursor(DEFAULT_CURSOR.clone())
   }
 
@@ -61,6 +117,7 @@ function App() {
     setDistanceM(DEFAULT_DISTANCE_M)
     setSmoothingAlpha(DEFAULT_SMOOTHING_ALPHA)
     setCalibration(DEFAULT_ANGLES)
+    setLiveReference(new Quaternion())
     setSmoothedCursor(DEFAULT_CURSOR.clone())
   }
 
@@ -83,6 +140,17 @@ function App() {
           smoothedCursor={smoothedCursor}
         />
         <div className="sidebar-stack">
+          <BleControls
+            supported={client.supported}
+            connected={bleConnected}
+            packetRate={bleStats.packetRate}
+            droppedPackets={bleStats.droppedPackets}
+            error={bleError}
+            inputSource={inputSource}
+            onSourceChange={setInputSource}
+            onConnect={() => void client.reconnect()}
+            onDisconnect={() => client.disconnect()}
+          />
           <ControlPanel
             angles={angles}
             distanceM={distanceM}

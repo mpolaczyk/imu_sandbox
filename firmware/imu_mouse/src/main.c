@@ -9,6 +9,7 @@
 #include "threads.h"
 #include "hids_mouse.h"
 #include "app.h"
+#include "imu_ble.h"
 
 int main(void)
 {
@@ -45,7 +46,7 @@ int main(void)
 			break;
 
 		case IM_APP_STATE_INIT_3:
-			if(im_hids_mouse_init() && im_hids_mouse_start() && im_gpio_button_init(im_app_on_button1))
+			if(im_hids_mouse_init() && imu_ble_init() && im_hids_mouse_start() && im_gpio_button_init(im_app_on_button1))
 			{
 				im_state_set(IM_APP_STATE_RUNNING);
 				break;

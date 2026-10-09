@@ -156,5 +156,12 @@ bool im_fusion_update(float gx, float gy, float gz, float ax, float ay, float az
 	}
 	out->yaw = yaw_rate;
 	out->pitch = pitch_rate;
+	out->qw = s_q0;
+	out->qx = s_q1;
+	out->qy = s_q2;
+	out->qz = s_q3;
+	out->gx = cx;
+	out->gy = cy;
+	out->gz = cz;
 	return true;
 }

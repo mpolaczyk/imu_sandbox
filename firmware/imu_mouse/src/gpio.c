@@ -60,7 +60,7 @@ static const struct gpio_dt_spec s_button = GPIO_DT_SPEC_GET(DT_NODELABEL(button
 static struct gpio_callback s_button_gpio_cb;
 static struct k_work_delayable s_button_work;
 static im_gpio_button_cb_t s_button_cb;
-static bool s_button_down;
+static atomic_t s_button_down;
 
 static void s_button_isr(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
@@ -74,11 +74,12 @@ static void s_button_work_fn(struct k_work *work)
 {
 	ARG_UNUSED(work);
 	const bool down = gpio_pin_get_dt(&s_button) > 0;
-	if (down && !s_button_down && s_button_cb)
+	const bool was_down = atomic_get(&s_button_down) != 0;
+	if (down && !was_down && s_button_cb)
 	{
 		s_button_cb();
 	}
-	s_button_down = down;
+	atomic_set(&s_button_down, down);
 }
 
 // External linkage
@@ -117,6 +118,11 @@ bool im_gpio_button_init(im_gpio_button_cb_t cb)
 	{
 		printk("Error: Button GPIO is not ready\n");
 		return false;
+	}
+
+	bool im_gpio_button_is_pressed(void)
+	{
+		return atomic_get(&s_button_down) != 0;
 	}
 	if (gpio_pin_configure_dt(&s_button, GPIO_INPUT) < 0)
 	{
