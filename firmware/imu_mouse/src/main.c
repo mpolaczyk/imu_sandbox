@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <zephyr/kernel.h>
-#include <zephyr/bluetooth/bluetooth.h>
 
 #include "gpio.h"
 #include "imu.h"
@@ -9,9 +8,11 @@
 #include "state.h"
 #include "threads.h"
 #include "hids_mouse.h"
+#include "app.h"
 
 int main(void)
 {
+	im_imu_set_gyro_cb(im_app_on_gyro);
 	while (1) 
 	{
 		switch (im_state_get())

@@ -81,6 +81,15 @@ BT_HIDS_DEF(hids_obj, INPUT_REP_BUTTONS_LEN, INPUT_REP_MOVEMENT_LEN, INPUT_REP_M
 
 static struct k_work hids_work;
 
+/* Number of non-continuous movement notifications awaiting completion. */
+static atomic_t movement_in_flight = ATOMIC_INIT(0);
+
+/* Allows a report to be queued for the next connection event while the previous one is sent. */
+#define MOVEMENT_MAX_IN_FLIGHT (2 * CONFIG_BT_HIDS_MAX_CLIENT_COUNT)
+
+/* Requested connection interval 7.5-11.25 ms (1.25 ms units), latency 0, 4 s timeout. */
+#define FAST_CONN_PARAM BT_LE_CONN_PARAM(6, 9, 0, 400)
+
 struct mouse_pos 
 {
 	int16_t x_val;
@@ -421,6 +430,12 @@ static void connected(struct bt_conn *conn, uint8_t err)
 
 	insert_conn_object(conn);
 
+	err = bt_conn_le_param_update(conn, FAST_CONN_PARAM);
+	if (err)
+	{
+		printk("Connection parameter update request failed (err %d)\n", err);
+	}
+
 	if (is_conn_slot_free()) 
     {
 		advertising_start();
@@ -452,6 +467,9 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 			break;
 		}
 	}
+
+	/* Completion callbacks are not guaranteed after a disconnect. */
+	atomic_set(&movement_in_flight, 0);
 
 	advertising_start();
 }
@@ -886,10 +904,21 @@ static void hid_init(void)
 static void report_sent(struct bt_conn *conn, void *user_data);
 #endif
 
+static void movement_sent(struct bt_conn *conn, void *user_data)
+{
+	ARG_UNUSED(conn);
+	ARG_UNUSED(user_data);
+
+	if (atomic_dec(&movement_in_flight) > 0)
+	{
+		k_work_submit(&hids_work);
+	}
+}
+
 static int mouse_movement_send_single(int16_t x_delta, int16_t y_delta, struct conn_mode *mode, bool cont_tx_mode)
 {
 	int err = 0;
-	bt_gatt_complete_func_t report_sent_cb = NULL;
+	bt_gatt_complete_func_t report_sent_cb = cont_tx_mode ? NULL : movement_sent;
 	void *user_data = NULL;
 
 #if CONFIG_SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING
@@ -899,17 +928,17 @@ static int mouse_movement_send_single(int16_t x_delta, int16_t y_delta, struct c
 	}
 #endif
 
+	if (!cont_tx_mode)
+	{
+		atomic_inc(&movement_in_flight);
+	}
+
 	if (mode->in_boot_mode) 
     {
 		int8_t x_delta_sat = MAX(MIN(x_delta, SCHAR_MAX), SCHAR_MIN);
 		int8_t y_delta_sat = MAX(MIN(y_delta, SCHAR_MAX), SCHAR_MIN);
 
-		err = bt_hids_boot_mouse_inp_rep_send(&hids_obj,
-						      mode->conn,
-						      NULL,
-						      x_delta_sat,
-						      y_delta_sat,
-						      report_sent_cb);
+		err = bt_hids_boot_mouse_inp_rep_send(&hids_obj, mode->conn, NULL, x_delta_sat, y_delta_sat, report_sent_cb);
 	} 
     else 
     {
@@ -925,22 +954,22 @@ static int mouse_movement_send_single(int16_t x_delta, int16_t y_delta, struct c
 		sys_put_le16(y, y_buff);
 
 		/* Encode report. */
-		BUILD_ASSERT(sizeof(buffer) == 3,
-				 "Only 2 axis, 12-bit each, are supported");
+		BUILD_ASSERT(sizeof(buffer) == 3, "Only 2 axis, 12-bit each, are supported");
 
 		buffer[0] = x_buff[0];
 		buffer[1] = (y_buff[0] << 4) | (x_buff[1] & 0x0f);
 		buffer[2] = (y_buff[1] << 4) | (y_buff[0] >> 4);
 
-		err = bt_hids_inp_rep_send_userdata(&hids_obj, mode->conn,
-						    INPUT_REP_MOVEMENT_INDEX,
-						    buffer, sizeof(buffer), report_sent_cb,
-						    user_data);
+		err = bt_hids_inp_rep_send_userdata(&hids_obj, mode->conn, INPUT_REP_MOVEMENT_INDEX, buffer, sizeof(buffer), report_sent_cb, user_data);
 	}
 
 	if (err) 
     {
 		printk("Failed to send report: %d\n", err);
+		if (!cont_tx_mode)
+		{
+			atomic_dec(&movement_in_flight);
+		}
 	}
 
 	return err;
@@ -960,14 +989,29 @@ static void mouse_movement_send(int16_t x_delta, int16_t y_delta)
 }
 
 
+/* Movement accumulated while a notification is still in flight. */
+static int32_t pending_x;
+static int32_t pending_y;
+
 static void mouse_handler(struct k_work *work)
 {
 	struct mouse_pos pos;
 
 	while (!k_msgq_get(&hids_queue, &pos, K_NO_WAIT)) 
     {
-		mouse_movement_send(pos.x_val, pos.y_val);
+		pending_x += pos.x_val;
+		pending_y += pos.y_val;
 	}
+
+	/* movement_sent() resubmits this work once an in-flight report completes. */
+	if (atomic_get(&movement_in_flight) > (atomic_val_t)(MOVEMENT_MAX_IN_FLIGHT - ARRAY_SIZE(conn_mode)) || (!pending_x && !pending_y))
+	{
+		return;
+	}
+
+	mouse_movement_send(CLAMP(pending_x, -0x7ff, 0x7ff), CLAMP(pending_y, -0x7ff, 0x7ff));
+	pending_x = 0;
+	pending_y = 0;
 }
 
 #if CONFIG_SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING
@@ -1402,6 +1446,18 @@ static void configure_buttons(void)
 }
 
 // External linkage
+
+void im_hids_mouse_move(int16_t dx, int16_t dy)
+{
+	const struct mouse_pos pos = { .x_val = dx, .y_val = dy };
+
+	if (k_msgq_put(&hids_queue, &pos, K_NO_WAIT))
+	{
+		printk("Warning: HID queue full, movement dropped (dx=%d dy=%d)\n", dx, dy);
+		return;
+	}
+	k_work_submit(&hids_work);
+}
 
 void im_bas_notify(void)
 {
