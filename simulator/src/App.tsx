@@ -28,6 +28,11 @@ function quaternionToAngles(quaternion: Quaternion): Angles {
   }
 }
 
+function poseQuaternion(pose: PosePacket): Quaternion {
+  const [w, x, y, z] = pose.quaternion
+  return new Quaternion(x, y, z, w)
+}
+
 function App() {
   const client = useMemo(() => new BlePoseClient(), [])
   const [angles, setAngles] = useState<Angles>(DEFAULT_ANGLES)
@@ -66,7 +71,7 @@ function App() {
     if (!livePose?.orientationValid) {
       return null
     }
-    const deviceOrientation = new Quaternion(...livePose.quaternion)
+    const deviceOrientation = poseQuaternion(livePose)
     return liveReference.clone().invert().multiply(deviceOrientation).normalize()
   }, [livePose, liveReference])
   const effectiveAngles = useMemo(
@@ -105,7 +110,7 @@ function App() {
 
   const handleCalibrate = () => {
     if (inputSource === 'ble' && livePose) {
-      setLiveReference(new Quaternion(...livePose.quaternion))
+      setLiveReference(poseQuaternion(livePose))
     } else {
       setCalibration(angles)
     }
