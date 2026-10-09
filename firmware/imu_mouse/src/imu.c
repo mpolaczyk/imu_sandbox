@@ -23,7 +23,7 @@ static K_SEM_DEFINE(s_imu_data_ready, 0, 1);
 static struct sensor_value s_accel[3];
 static struct sensor_value s_gyro[3];
 static const struct device* const s_imu = DEVICE_DT_GET_ONE(st_lsm6dsl);
-static im_imu_gyro_cb_t s_gyro_cb;
+static im_imu_sample_cb_t s_sample_cb;
 
 static void s_imu_data_ready_handler(const struct device *dev, const struct sensor_trigger *trig)
 {
@@ -74,9 +74,9 @@ static bool s_imu_wait_ready(void)
 
 // External linkage
 
-void im_imu_set_gyro_cb(im_imu_gyro_cb_t cb)
+void im_imu_set_sample_cb(im_imu_sample_cb_t cb)
 {
-	s_gyro_cb = cb;
+	s_sample_cb = cb;
 }
 
 bool im_imu_thread_start()
@@ -169,9 +169,9 @@ bool im_imu_collect(const bool do_print)
 		sprintf(out_str, "gyro x:%f dps y:%f dps z:%f dps", sensor_value_to_float(&s_gyro[0]), sensor_value_to_float(&s_gyro[1]), sensor_value_to_float(&s_gyro[2]));
 		printk("%s\n", out_str);
 	}
-	if (s_gyro_cb)
+	if (s_sample_cb)
 	{
-		s_gyro_cb(sensor_value_to_float(&s_gyro[0]), sensor_value_to_float(&s_gyro[1]), sensor_value_to_float(&s_gyro[2]), sensor_value_to_float(&s_accel[0]), sensor_value_to_float(&s_accel[1]), sensor_value_to_float(&s_accel[2]));
+		s_sample_cb(sensor_value_to_float(&s_gyro[0]), sensor_value_to_float(&s_gyro[1]), sensor_value_to_float(&s_gyro[2]), sensor_value_to_float(&s_accel[0]), sensor_value_to_float(&s_accel[1]), sensor_value_to_float(&s_accel[2]));
 	}
 	return true;
 }

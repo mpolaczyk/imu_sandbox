@@ -12,7 +12,6 @@ bool im_hids_mouse_pairing_pending(void);
 
 /* Accepts or rejects the pending pairing passkey. */
 void im_hids_mouse_pairing_reply(bool accept);
-void im_bas_notify(void);
 
 /* Queues a relative movement; drops it and warns if the queue is full. */
 void im_hids_mouse_move(int16_t dx, int16_t dy);

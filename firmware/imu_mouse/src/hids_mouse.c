@@ -31,8 +31,6 @@
 
 #define BASE_USB_HID_SPEC_VERSION   0x0101
 
-/* Number of pixels by which the cursor is moved when a button is pushed. */
-#define MOVEMENT_SPEED              5
 /* Number of input reports in this application. */
 #define INPUT_REPORT_COUNT          3
 /* Length of Mouse Input Report containing button data. */
@@ -53,8 +51,6 @@
 #define INPUT_REP_REF_MOVEMENT_ID   2
 /* Id of reference to Mouse Input Report containing media player data. */
 #define INPUT_REP_REF_MPLAYER_ID    3
-/* Time to hold a button press to enter continuous report sending mode. */
-#define CONT_REPORT_ENTER_BUTTON_PRESS_TIME_MS 2000
 
 /* HIDs queue size. */
 #define HIDS_QUEUE_SIZE 10
@@ -329,15 +325,7 @@ static void pairing_process(struct k_work *work)
 	bt_addr_le_to_str(bt_conn_get_dst(pairing_data.conn), addr, sizeof(addr));
 
 	printk("Passkey for %s: %06u\n", addr, pairing_data.passkey);
-
-	if (IS_ENABLED(CONFIG_SOC_SERIES_NRF54H) || IS_ENABLED(CONFIG_SOC_SERIES_NRF54L)) 
-    {
-		printk("Press Button 0 to confirm, Button 1 to reject.\n");
-	} 
-    else 
-    {
-		printk("Press Button 1 to confirm, Button 2 to reject.\n");
-	}
+	printk("Press Button 1 to confirm.\n");
 }
 
 
@@ -1333,19 +1321,6 @@ void im_hids_mouse_move(int16_t dx, int16_t dy)
 		return;
 	}
 	k_work_submit(&hids_work);
-}
-
-void im_bas_notify(void)
-{
-	uint8_t battery_level = bt_bas_get_battery_level();
-
-	battery_level--;
-	if (!battery_level) 
-    {
-		battery_level = 100U;
-	}
-
-	bt_bas_set_battery_level(battery_level);
 }
 
 bool im_hids_mouse_init(void)
