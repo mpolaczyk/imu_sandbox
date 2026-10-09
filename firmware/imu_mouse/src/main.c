@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <zephyr/kernel.h>
+#include <zephyr/bluetooth/bluetooth.h>
 
 #include "gpio.h"
 #include "imu.h"
@@ -7,6 +8,7 @@
 #include "log.h"
 #include "state.h"
 #include "threads.h"
+#include "hids_mouse.h"
 
 int main(void)
 {
@@ -29,13 +31,26 @@ int main(void)
 			{
 				im_log_thread_start();
 				if(im_imu_init(true, true))
-				{
-					im_state_set(IM_APP_STATE_RUNNING); // Before the IMU thread starts, so it can set FAIL afterwards
+				{					
+					// Change the state before the IMU thread starts, so it can set FAIL afterwards
+					im_state_set(IM_APP_STATE_INIT_3);
 					if(im_imu_thread_start())
 					{
 						break;
 					}
 				}
+			}
+			im_state_set(IM_APP_STATE_FAIL);
+			break;
+
+		case IM_APP_STATE_INIT_3:
+			if(im_hids_mouse_init())
+			{
+				if(im_hids_mouse_start())
+				{
+					im_state_set(IM_APP_STATE_RUNNING);
+					break;
+				}	
 			}
 			im_state_set(IM_APP_STATE_FAIL);
 			break;

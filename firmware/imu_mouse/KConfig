@@ -1,0 +1,52 @@
+menu "IMU Mouse"
+
+config SAMPLE_BT_HIDS_SECURITY
+	bool "Bluetooth LE security"
+	default y
+	imply BT_PRIVACY
+	select BT_SMP
+	select BT_SETTINGS
+	select FLASH
+	select FLASH_PAGE_LAYOUT
+	select FLASH_MAP
+	select SETTINGS
+	imply ZMS if (SOC_FLASH_NRF_RRAM || SOC_FLASH_NRF_MRAM)
+	imply NVS if !(SOC_FLASH_NRF_RRAM || SOC_FLASH_NRF_MRAM)
+	help
+	  Enable Bluetooth LE security support.
+
+config SAMPLE_BT_HIDS_SECURITY_MITM
+	bool "Passkey display MITM protection"
+	depends on SAMPLE_BT_HIDS_SECURITY
+	depends on PRINTK
+	default y
+	help
+	  Enable displaying passkey for Man-In-The-Middle (MITM) protection.
+	  Implementation uses the "printk" function to display the passkey.
+
+config SAMPLE_BT_DIRECTED_ADVERTISING
+	bool "Directed advertising"
+	default y
+	depends on SAMPLE_BT_HIDS_SECURITY
+
+config SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING
+	bool "Continuous report sending"
+	depends on BT_ATT_SENT_CB_AFTER_TX
+	help
+	  Enable the continuous report sending feature in the peripheral HIDS sample.
+	  Hold down a button for more than 2 seconds to enable continuous report sending.
+
+config SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING_PREPARE_DISTANCE_US
+	int "Prepare distance for continuous report sending"
+	depends on SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING
+	depends on BT_RADIO_NOTIFICATION_CONN_CB
+	default 400
+	help
+	  The time before the next Bluetooth LE connection event when the report should be prepared.
+	  Only supported if the platform supports radio notification connection callbacks.
+	  The default value 400 us was arbitrarily chosen, so that the preparation fits
+	  in short intervals below 500 us.
+
+endmenu
+
+source "Kconfig.zephyr"

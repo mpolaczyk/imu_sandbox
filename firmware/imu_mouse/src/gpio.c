@@ -22,6 +22,7 @@ static void s_gpio_thread_fn(void *p1, void *p2, void *p3)
 		switch (state)
 		{
 		case IM_APP_STATE_INIT_2:
+		case IM_APP_STATE_INIT_3:
 			if (!im_gpio_led_toggle_only(IM_GPIO_LED_GREEN))
 			{
 				im_state_set(IM_APP_STATE_FAIL);

@@ -10,3 +10,16 @@
 	// Without it poll_out drops data when the 1 KB TX ring buffer is full, losing early logs
 	hw-flow-control;
 };
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+    buttons {
+        compatible = "gpio-keys";
+
+        button0: button_0 {
+            gpios = <&gpio0 3 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;  // Button D1 of the Seeed Studio XIAO Expansion Board
+            label = "Button 1";
+        };
+    };
+};
