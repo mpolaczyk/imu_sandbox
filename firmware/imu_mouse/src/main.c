@@ -10,6 +10,17 @@
 #include "hids_mouse.h"
 #include "app.h"
 
+static void on_button1(void)
+{
+	// Button 1 confirms pairing; otherwise it changes the sensitivity
+	if (im_hids_mouse_pairing_pending())
+	{
+		im_hids_mouse_pairing_reply(true);
+		return;
+	}
+	im_app_sensitivity_next();
+}
+
 int main(void)
 {
 	im_imu_set_gyro_cb(im_app_on_gyro);
@@ -45,13 +56,10 @@ int main(void)
 			break;
 
 		case IM_APP_STATE_INIT_3:
-			if(im_hids_mouse_init())
+			if(im_hids_mouse_init() && im_hids_mouse_start() && im_gpio_button_init(on_button1))
 			{
-				if(im_hids_mouse_start())
-				{
-					im_state_set(IM_APP_STATE_RUNNING);
-					break;
-				}	
+				im_state_set(IM_APP_STATE_RUNNING);
+				break;
 			}
 			im_state_set(IM_APP_STATE_FAIL);
 			break;

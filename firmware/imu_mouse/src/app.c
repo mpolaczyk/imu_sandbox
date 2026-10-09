@@ -6,8 +6,8 @@
 #include "imu.h"
 #include "hids_mouse.h"
 
-#define MOUSE_PX_PER_RAD 1500.0f
-#define MOUSE_PX_PER_RAD_SAMPLE (MOUSE_PX_PER_RAD / IM_IMU_SAMPLE_RATE_HZ)
+static const float s_px_per_rad[] = {1500.0f, 2000.0f, 2500.0f, 3000.0f, 3500.0f, 4000.0f};
+static volatile uint8_t s_sens_idx = 2;
 // Mounting-dependent: yaw (gyro Z) -> X, pitch (gyro Y) -> Y; roll (gyro X) is ignored
 #define MOUSE_X_SIGN (-1.0f)
 #define MOUSE_Y_SIGN (-1.0f)
@@ -88,6 +88,12 @@ static void s_fusion_update(float gx, float gy, float gz, float ax, float ay, fl
 	s_q3 += h * (q0 * gz + q1 * gy - q2 * gx);
 	const float n = 1.0f / sqrtf(s_q0 * s_q0 + s_q1 * s_q1 + s_q2 * s_q2 + s_q3 * s_q3);
 	s_q0 *= n; s_q1 *= n; s_q2 *= n; s_q3 *= n;
+}
+
+void im_app_sensitivity_next(void)
+{
+	s_sens_idx = (s_sens_idx + 1) % ARRAY_SIZE(s_px_per_rad);
+	printk("Sensitivity: %d px/rad\n", (int)s_px_per_rad[s_sens_idx]);
 }
 
 void im_app_on_gyro(float gx, float gy, float gz, float ax, float ay, float az)
@@ -172,8 +178,9 @@ void im_app_on_gyro(float gx, float gy, float gz, float ax, float ay, float az)
 		pitch_rate = 0.0f;
 	}
 
-	const float fx = s_mouse_rem_x + MOUSE_X_SIGN * yaw_rate * MOUSE_PX_PER_RAD_SAMPLE;
-	const float fy = s_mouse_rem_y + MOUSE_Y_SIGN * pitch_rate * MOUSE_PX_PER_RAD_SAMPLE;
+	const float px_per_rad_sample = s_px_per_rad[s_sens_idx] / IM_IMU_SAMPLE_RATE_HZ;
+	const float fx = s_mouse_rem_x + MOUSE_X_SIGN * yaw_rate * px_per_rad_sample;
+	const float fy = s_mouse_rem_y + MOUSE_Y_SIGN * pitch_rate * px_per_rad_sample;
 	const int16_t dx = (int16_t)fx;
 	const int16_t dy = (int16_t)fy;
 	s_mouse_rem_x = fx - dx;

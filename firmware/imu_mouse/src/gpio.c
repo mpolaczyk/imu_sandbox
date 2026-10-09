@@ -54,6 +54,33 @@ static const struct gpio_dt_spec s_leds[] =
     GPIO_DT_SPEC_GET(DT_ALIAS(led2), gpios),    // IM_GPIO_LED_BLUE
 };
 
+#define BUTTON_DEBOUNCE_MS 30
+
+static const struct gpio_dt_spec s_button = GPIO_DT_SPEC_GET(DT_NODELABEL(button0), gpios);
+static struct gpio_callback s_button_gpio_cb;
+static struct k_work_delayable s_button_work;
+static im_gpio_button_cb_t s_button_cb;
+static bool s_button_down;
+
+static void s_button_isr(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	ARG_UNUSED(dev);
+	ARG_UNUSED(cb);
+	ARG_UNUSED(pins);
+	k_work_reschedule(&s_button_work, K_MSEC(BUTTON_DEBOUNCE_MS));
+}
+
+static void s_button_work_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	const bool down = gpio_pin_get_dt(&s_button) > 0;
+	if (down && !s_button_down && s_button_cb)
+	{
+		s_button_cb();
+	}
+	s_button_down = down;
+}
+
 // External linkage
 
 void im_gpio_thread_start()
@@ -81,6 +108,30 @@ bool im_gpio_init()
 		}
 	}
 	printk("GPIO Ok\n");
+	return true;
+}
+
+bool im_gpio_button_init(im_gpio_button_cb_t cb)
+{
+	if (!gpio_is_ready_dt(&s_button))
+	{
+		printk("Error: Button GPIO is not ready\n");
+		return false;
+	}
+	if (gpio_pin_configure_dt(&s_button, GPIO_INPUT) < 0)
+	{
+		printk("Error: Button GPIO configuration failed\n");
+		return false;
+	}
+	s_button_cb = cb;
+	k_work_init_delayable(&s_button_work, s_button_work_fn);
+	gpio_init_callback(&s_button_gpio_cb, s_button_isr, BIT(s_button.pin));
+	if (gpio_add_callback(s_button.port, &s_button_gpio_cb) < 0 ||
+	    gpio_pin_interrupt_configure_dt(&s_button, GPIO_INT_EDGE_BOTH) < 0)
+	{
+		printk("Error: Button GPIO interrupt setup failed\n");
+		return false;
+	}
 	return true;
 }
 

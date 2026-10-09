@@ -23,7 +23,6 @@
 #include <bluetooth/services/hids.h>
 #include <bluetooth/radio_notification_cb.h>
 #include <zephyr/bluetooth/services/dis.h>
-#include <dk_buttons_and_leds.h>
 
 #include "hids_mouse.h"
 
@@ -59,19 +58,6 @@
 
 /* HIDs queue size. */
 #define HIDS_QUEUE_SIZE 10
-
-/* Key used to move cursor left */
-#define KEY_LEFT_MASK   DK_BTN1_MSK
-/* Key used to move cursor up */
-#define KEY_UP_MASK     DK_BTN2_MSK
-/* Key used to move cursor right */
-#define KEY_RIGHT_MASK  DK_BTN3_MSK
-/* Key used to move cursor down */
-#define KEY_DOWN_MASK   DK_BTN4_MSK
-
-/* Key used to accept or reject passkey value */
-#define KEY_PAIRING_ACCEPT DK_BTN1_MSK
-#define KEY_PAIRING_REJECT DK_BTN2_MSK
 
 /* Timeout for low duty directed advertising (2 seconds). */
 #define LOW_DUTY_DIRECTED_ADV_TIMEOUT_MS 2000
@@ -1015,33 +1001,6 @@ static void mouse_handler(struct k_work *work)
 }
 
 #if CONFIG_SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING
-static struct mouse_pos buttons_to_mouse_pos(uint32_t buttons)
-{
-	struct mouse_pos pos;
-
-	pos.x_val = 0;
-	pos.y_val = 0;
-
-	if (buttons & KEY_LEFT_MASK) 
-    {
-		pos.x_val -= MOVEMENT_SPEED;
-	}
-	if (buttons & KEY_UP_MASK) 
-    {
-		pos.y_val -= MOVEMENT_SPEED;
-	}
-	if (buttons & KEY_RIGHT_MASK) 
-    {
-		pos.x_val += MOVEMENT_SPEED;
-	}
-	if (buttons & KEY_DOWN_MASK) 
-    {
-		pos.y_val += MOVEMENT_SPEED;
-	}
-
-	return pos;
-}
-
 static void cont_report_tx(struct bt_conn *conn)
 {
 	if (!atomic_get(&cont_report_tx_on)) 
@@ -1082,7 +1041,7 @@ static void cont_report_tx(struct bt_conn *conn)
 		return;
 	}
 
-	struct mouse_pos pos = buttons_to_mouse_pos(dk_get_buttons());
+	struct mouse_pos pos = { 0, 0 };
 
 	int err = mouse_movement_send_single(pos.x_val, pos.y_val, mode, true);
 
@@ -1352,100 +1311,17 @@ static void num_comp_reply(bool accept)
 	k_sched_unlock();
 }
 
-static void button_changed(uint32_t button_state, uint32_t has_changed)
-{
-	bool data_to_send = false;
-	struct mouse_pos pos;
-	uint32_t buttons = button_state & has_changed;
-
-	memset(&pos, 0, sizeof(struct mouse_pos));
-
-	if (IS_ENABLED(CONFIG_SAMPLE_BT_HIDS_SECURITY_MITM)) 
-    {
-		if (k_msgq_num_used_get(&mitm_queue)) 
-        {
-			if (buttons & KEY_PAIRING_ACCEPT) 
-            {
-				num_comp_reply(true);
-				return;
-			}
-			if (buttons & KEY_PAIRING_REJECT) 
-            {
-				num_comp_reply(false);
-				return;
-			}
-		}
-	}
-
-	if (buttons & KEY_LEFT_MASK) 
-    {
-		pos.x_val -= MOVEMENT_SPEED;
-		printk("%s(): left\n", __func__);
-		data_to_send = true;
-	}
-	if (buttons & KEY_UP_MASK) 
-    {
-		pos.y_val -= MOVEMENT_SPEED;
-		printk("%s(): up\n", __func__);
-		data_to_send = true;
-	}
-	if (buttons & KEY_RIGHT_MASK)
-    {
-		pos.x_val += MOVEMENT_SPEED;
-		printk("%s(): right\n", __func__);
-		data_to_send = true;
-	}
-	if (buttons & KEY_DOWN_MASK) 
-    {
-		pos.y_val += MOVEMENT_SPEED;
-		printk("%s(): down\n", __func__);
-		data_to_send = true;
-	}
-
-#if CONFIG_SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING
-	if (button_state != 0) 
-    {
-		if (atomic_get(&cont_report_tx_on) == 0) 
-        {
-			(void) k_work_schedule(&continuous_report_tx_start_work, K_MSEC(CONT_REPORT_ENTER_BUTTON_PRESS_TIME_MS));
-		}
-	} 
-    else 
-    {
-		(void) k_work_cancel_delayable(&continuous_report_tx_start_work);
-		continuous_report_tx_stop();
-	}
-#endif
-
-	if (data_to_send) 
-    {
-		int err;
-
-		err = k_msgq_put(&hids_queue, &pos, K_NO_WAIT);
-		if (err) 
-        {
-			printk("No space in the queue for button pressed\n");
-			return;
-		}
-		if (k_msgq_num_used_get(&hids_queue) == 1) 
-        {
-			k_work_submit(&hids_work);
-		}
-	}
-}
-
-static void configure_buttons(void)
-{
-	int err;
-
-	err = dk_buttons_init(button_changed);
-	if (err) 
-    {
-		printk("Cannot init buttons (err: %d)\n", err);
-	}
-}
-
 // External linkage
+
+bool im_hids_mouse_pairing_pending(void)
+{
+	return k_msgq_num_used_get(&mitm_queue) > 0;
+}
+
+void im_hids_mouse_pairing_reply(bool accept)
+{
+	num_comp_reply(accept);
+}
 
 void im_hids_mouse_move(int16_t dx, int16_t dy)
 {
@@ -1539,8 +1415,6 @@ bool im_hids_mouse_start(void)
 	}
 
 	advertising_start();
-
-	configure_buttons();
 
     printk("Mouse started\n");
 	return true;
