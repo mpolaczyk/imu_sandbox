@@ -171,7 +171,7 @@ bool im_imu_collect(const bool do_print)
 	}
 	if (s_gyro_cb)
 	{
-		s_gyro_cb(sensor_value_to_float(&s_gyro[0]), sensor_value_to_float(&s_gyro[1]), sensor_value_to_float(&s_gyro[2]));
+		s_gyro_cb(sensor_value_to_float(&s_gyro[0]), sensor_value_to_float(&s_gyro[1]), sensor_value_to_float(&s_gyro[2]), sensor_value_to_float(&s_accel[0]), sensor_value_to_float(&s_accel[1]), sensor_value_to_float(&s_accel[2]));
 	}
 	return true;
 }

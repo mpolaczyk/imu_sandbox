@@ -3,8 +3,8 @@
 
 #define IM_IMU_SAMPLE_RATE_HZ 416   // 12, 26, 52, 104, 208, 416, 833, 1666, 3332 and 6664 Hz
 
-/* Called from the IMU thread with gyro rates in rad/s. */
-typedef void (*im_imu_gyro_cb_t)(float gx, float gy, float gz);
+/* Called from the IMU thread with gyro rates in rad/s and acceleration in m/s^2. */
+typedef void (*im_imu_gyro_cb_t)(float gx, float gy, float gz, float ax, float ay, float az);
 
 void im_imu_set_gyro_cb(im_imu_gyro_cb_t cb);
 bool im_imu_thread_start(void);
