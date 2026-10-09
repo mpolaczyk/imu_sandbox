@@ -171,8 +171,8 @@ export class BlePoseClient {
     }
     const service = await server.getPrimaryService(IMU_POSE_SERVICE_UUID)
     const poseCharacteristic = await service.getCharacteristic(IMU_POSE_CHARACTERISTIC_UUID)
-    poseCharacteristic.addEventListener('characteristicvaluechanged', (event) => {
-      const value = (event.target as BluetoothCharacteristic).value
+    poseCharacteristic.addEventListener('characteristicvaluechanged', () => {
+      const value = poseCharacteristic.value
       if (!value) {
         return
       }
@@ -194,8 +194,10 @@ export class BlePoseClient {
 
   private handlePose(pose: PosePacket): void {
     if (this.lastSequence !== null) {
-      const missing = (pose.sequence - this.lastSequence - 1 + 0x10000) % 0x10000
-      this.droppedPackets += missing
+      const sequenceDelta = (pose.sequence - this.lastSequence + 0x10000) % 0x10000
+      if (sequenceDelta > 1 && sequenceDelta < 0x8000) {
+        this.droppedPackets += sequenceDelta - 1
+      }
     }
     this.lastSequence = pose.sequence
 
