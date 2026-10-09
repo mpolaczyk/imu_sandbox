@@ -21,8 +21,29 @@
 
 #include <zephyr/bluetooth/services/bas.h>
 #include <bluetooth/services/hids.h>
-#include <bluetooth/radio_notification_cb.h>
 #include <zephyr/bluetooth/services/dis.h>
+
+/*
+ * Origin: Nordic "peripheral_hids_mouse" sample, trimmed for a single-host IMU mouse.
+ *
+ * Feature inventory (status after the cleanup):
+ *
+ * | Feature                                      | Controlled by                            | Status  |
+ * |----------------------------------------------|------------------------------------------|---------|
+ * | Passkey/MITM pairing (button 1 confirms)     | SAMPLE_BT_HIDS_SECURITY_MITM             | kept    |
+ * | Security and bonding (SMP, privacy, settings)| SAMPLE_BT_HIDS_SECURITY                  | kept    |
+ * | Directed advertising to bonded peers         | SAMPLE_BT_DIRECTED_ADVERTISING           | kept    |
+ * | Boot-mode mouse reports                      | HIDS pm event handler                    | kept    |
+ * | Movement batching (queue, in-flight limit)   | application code                         | kept    |
+ * | Fast connection parameter request            | FAST_CONN_PARAM                          | kept    |
+ * | Battery service (static level, no updates)   | BT_BAS                                   | kept    |
+ * | Device Information Service                   | BT_DIS, BT_DIS_*                         | kept    |
+ * | HID report map: buttons/wheel + media report | hid_init()                               | kept, unused (candidates to trim, or
+ * |                                              |                                          | extend for clicks)                   |
+ * | Two simultaneous connections                 | BT_MAX_CONN, BT_HIDS_MAX_CLIENT_COUNT    | removed (one host at a time)         |
+ * | Connection SCI (subrated intervals)          | BT_HIDS_SCI                              | removed |
+ * | Continuous report sending                    | SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING | removed |
+ */
 
 #include "hids_mouse.h"
 
@@ -55,19 +76,16 @@
 /* HIDs queue size. */
 #define HIDS_QUEUE_SIZE 10
 
-/* Timeout for low duty directed advertising (2 seconds). */
-#define LOW_DUTY_DIRECTED_ADV_TIMEOUT_MS 2000
-
 /* HIDS instance. */
 BT_HIDS_DEF(hids_obj, INPUT_REP_BUTTONS_LEN, INPUT_REP_MOVEMENT_LEN, INPUT_REP_MEDIA_PLAYER_LEN);
 
 static struct k_work hids_work;
 
-/* Number of non-continuous movement notifications awaiting completion. */
+/* Movement notifications awaiting completion. */
 static atomic_t movement_in_flight = ATOMIC_INIT(0);
 
 /* Allows a report to be queued for the next connection event while the previous one is sent. */
-#define MOVEMENT_MAX_IN_FLIGHT (2 * CONFIG_BT_HIDS_MAX_CLIENT_COUNT)
+#define MOVEMENT_MAX_IN_FLIGHT 2
 
 /* Requested connection interval 7.5-11.25 ms (1.25 ms units), latency 0, 4 s timeout. */
 #define FAST_CONN_PARAM BT_LE_CONN_PARAM(6, 9, 0, 400)
@@ -84,8 +102,6 @@ K_MSGQ_DEFINE(hids_queue, sizeof(struct mouse_pos), HIDS_QUEUE_SIZE, 4);
 #if CONFIG_SAMPLE_BT_DIRECTED_ADVERTISING
 /* Bonded address queue. */
 K_MSGQ_DEFINE(bonds_queue, sizeof(bt_addr_le_t), CONFIG_BT_MAX_PAIRED, 4);
-
-static struct k_work_delayable low_duty_directed_adv_timeout_work;
 #endif /* CONFIG_SAMPLE_BT_DIRECTED_ADVERTISING */
 
 static const struct bt_data ad[] = 
@@ -100,31 +116,9 @@ static const struct bt_data sd[] =
 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
 };
 
-struct conn_mode 
-{
-	struct bt_conn *conn;
-	bool in_boot_mode;
-#if CONFIG_SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING
-	/** Number of pending reports to send.
-	 *  Only up to two at a time should be kept in the continuous report sending mode.
-	 */
-	atomic_t cont_report_tx_pending_reports;
-
-	/** Incremented once per radio prepare callback; used to measure
-	 *  GATT notification sent latency.
-	 */
-	uint32_t cont_report_tx_seq;
-
-	/** Reports which were not sent on the nearest connection interval. */
-	uint32_t cont_report_tx_delayed_reps;
-
-	/** Intervals in which no report was sent to avoid filling up the pipeline. */
-	uint32_t cont_report_tx_skipped;
-#endif
-	enum bt_hids_sci_mode_value requested_sci_mode;
-};
-
-static struct conn_mode conn_mode[CONFIG_BT_HIDS_MAX_CLIENT_COUNT];
+/* Single connected host. */
+static struct bt_conn *s_conn;
+static bool s_in_boot_mode;
 
 static bool is_adv_running;
 
@@ -142,72 +136,13 @@ K_MSGQ_DEFINE(mitm_queue, sizeof(struct pairing_data_mitm), CONFIG_BT_HIDS_MAX_C
 
 static void advertising_continue(void);
 
-#if CONFIG_SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING
-/** Control for continuous report sending feature */
-static atomic_t cont_report_tx_on = ATOMIC_INIT(0);
-
-static void continuous_report_tx_start(struct k_work *work);
-
-static K_WORK_DELAYABLE_DEFINE(continuous_report_tx_start_work,
-			       continuous_report_tx_start);
-#endif /* CONFIG_SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING */
-
 #if CONFIG_SAMPLE_BT_DIRECTED_ADVERTISING
 static void bond_find(const struct bt_bond_info *info, void *user_data)
 {
-	int err;
-	/* Filter already connected peers. */
-	for (size_t i = 0; i < ARRAY_SIZE(conn_mode); i++) 
-    {
-		if (conn_mode[i].conn) 
-        {
-			const bt_addr_le_t *dst = bt_conn_get_dst(conn_mode[i].conn);
-			if (!bt_addr_le_cmp(&info->addr, dst)) 
-            {
-				return;
-			}
-		}
-	}
-
-	err = k_msgq_put(&bonds_queue, (void *) &info->addr, K_NO_WAIT);
-	if (err) 
+	if (k_msgq_put(&bonds_queue, (void *) &info->addr, K_NO_WAIT)) 
     {
 		printk("No space in the queue for the bond.\n");
 	}
-}
-
-static bool is_any_peer_connected(void)
-{
-	for (size_t i = 0; i < ARRAY_SIZE(conn_mode); i++) 
-    {
-		if (conn_mode[i].conn) 
-        {
-			return true;
-		}
-	}
-
-	return false;
-}
-
-static void low_duty_directed_adv_timeout_handler(struct k_work *work)
-{
-	int err;
-
-	ARG_UNUSED(work);
-
-	printk("Low duty directed advertising timed out\n");
-
-	__ASSERT_NO_MSG(is_adv_running);
-
-	err = bt_le_adv_stop();
-	if (err) 
-    {
-		printk("Advertising failed to stop (err %d)\n", err);
-		return;
-	}
-	is_adv_running = false;
-
-	advertising_continue();
 }
 #endif /* CONFIG_SAMPLE_BT_DIRECTED_ADVERTISING */
 
@@ -221,7 +156,6 @@ static void advertising_continue(void)
 	if (!k_msgq_get(&bonds_queue, &addr, K_NO_WAIT)) 
     {
 		char addr_buf[BT_ADDR_LE_STR_LEN];
-		bool any_peer_connected = is_any_peer_connected();
 		int err;
 
 		if (is_adv_running) 
@@ -233,21 +167,9 @@ static void advertising_continue(void)
 				return;
 			}
 			is_adv_running = false;
-			(void)k_work_cancel_delayable(&low_duty_directed_adv_timeout_work);
 		}
 
-		if (any_peer_connected) 
-        {
-			/* Use low duty directed advertising to maintain connections with other
-			 * peers. High duty directed advertising may disconnect existing
-			 * connections.
-			 */
-			adv_param = *BT_LE_ADV_CONN_DIR_LOW_DUTY(&addr);
-		} 
-        else 
-        {
-			adv_param = *BT_LE_ADV_CONN_DIR(&addr);
-		}
+		adv_param = *BT_LE_ADV_CONN_DIR(&addr);
 		adv_param.options |= BT_LE_ADV_OPT_DIR_ADDR_RPA;
 
 		err = bt_le_adv_start(&adv_param, NULL, 0, NULL, 0);
@@ -260,15 +182,7 @@ static void advertising_continue(void)
 
 		bt_addr_le_to_str(&addr, addr_buf, BT_ADDR_LE_STR_LEN);
 		printk("Direct advertising to %s started\n", addr_buf);
-
-		/* High-duty directed advertising expires automatically after timeout defined in
-		 * the Bluetooth specification. The Bluetooth stack will call connected() callback
-		 * with error code.
-		 */
-		if (any_peer_connected) 
-        {
-			(void)k_work_schedule(&low_duty_directed_adv_timeout_work, K_MSEC(LOW_DUTY_DIRECTED_ADV_TIMEOUT_MS));
-		}
+		/* High-duty directed advertising expires on its own; connected() then gets an error code. */
 	} 
     else
 #endif /* CONFIG_SAMPLE_BT_DIRECTED_ADVERTISING */
@@ -329,52 +243,11 @@ static void pairing_process(struct k_work *work)
 }
 
 
-static void insert_conn_object(struct bt_conn *conn)
-{
-	for (size_t i = 0; i < ARRAY_SIZE(conn_mode); i++) 
-    {
-		if (!conn_mode[i].conn) 
-        {
-			conn_mode[i].conn = conn;
-			conn_mode[i].in_boot_mode = false;
-#if CONFIG_SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING
-			atomic_set(&conn_mode[i].cont_report_tx_pending_reports, 0);
-#endif
-			if (IS_ENABLED(CONFIG_BT_HIDS_SCI)) 
-            {
-				conn_mode[i].requested_sci_mode = BT_HIDS_SCI_MODE_NONE;
-			}
-			return;
-		}
-	}
-
-	printk("Connection object could not be inserted %p\n", conn);
-}
-
-
-static bool is_conn_slot_free(void)
-{
-	for (size_t i = 0; i < ARRAY_SIZE(conn_mode); i++) 
-    {
-		if (!conn_mode[i].conn) 
-        {
-			return true;
-		}
-	}
-
-	return false;
-}
-
-
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
 	is_adv_running = false;
-
-#if CONFIG_SAMPLE_BT_DIRECTED_ADVERTISING
-	(void)k_work_cancel_delayable(&low_duty_directed_adv_timeout_work);
-#endif
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
@@ -402,17 +275,13 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		return;
 	}
 
-	insert_conn_object(conn);
+	s_conn = conn;
+	s_in_boot_mode = false;
 
 	err = bt_conn_le_param_update(conn, FAST_CONN_PARAM);
 	if (err)
 	{
 		printk("Connection parameter update request failed (err %d)\n", err);
-	}
-
-	if (is_conn_slot_free()) 
-    {
-		advertising_start();
 	}
 }
 
@@ -433,13 +302,9 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 		printk("Failed to notify HID service about disconnection\n");
 	}
 
-	for (size_t i = 0; i < ARRAY_SIZE(conn_mode); i++) 
-    {
-		if (conn_mode[i].conn == conn) 
-        {
-			conn_mode[i].conn = NULL;
-			break;
-		}
+	if (s_conn == conn)
+	{
+		s_conn = NULL;
 	}
 
 	/* Completion callbacks are not guaranteed after a disconnect. */
@@ -467,289 +332,35 @@ static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_
 }
 #endif /* CONFIG_SAMPLE_BT_HIDS_SECURITY */
 
-#ifdef CONFIG_BT_HIDS_SCI
-static const char *sci_mode_to_string(enum bt_hids_sci_mode_value mode)
-{
-	switch (mode) 
-    {
-	case BT_HIDS_SCI_MODE_NONE:
-		return "NONE";
-	case BT_HIDS_SCI_MODE_DEFAULT:
-		return "DEFAULT";
-	case BT_HIDS_SCI_MODE_FAST:
-		return "FAST";
-	case BT_HIDS_SCI_MODE_LOW_POWER:
-		return "LOW_POWER";
-	case BT_HIDS_SCI_MODE_FULL_RANGE:
-		return "FULL_RANGE";
-	}
-
-	return "UNKNOWN";
-}
-
-static bool hid_sci_mode_try(size_t conn_idx, enum bt_hids_sci_mode_value mode, const struct bt_conn_le_conn_rate_changed *params)
-{
-	bool mode_updated = false;
-
-	if (bt_hids_sci_mode_validate(mode, params)) 
-    {
-		int err = bt_hids_sci_mode_updated(conn_mode[conn_idx].conn, mode);
-
-		if (!err) 
-        {
-			mode_updated = true;
-		}
-	}
-
-	return mode_updated;
-}
-
-static void find_valid_sci_mode(size_t conn_idx, const struct bt_conn_le_conn_rate_changed *params)
-{
-	bool valid_mode_found = false;
-	static const enum bt_hids_sci_mode_value modes_to_try[] = 
-    {
-		BT_HIDS_SCI_MODE_FAST,
-		BT_HIDS_SCI_MODE_DEFAULT,
-		BT_HIDS_SCI_MODE_LOW_POWER,
-		BT_HIDS_SCI_MODE_FULL_RANGE,
-	};
-
-	printk("Attempting to find a valid SCI mode...\n");
-
-	for (size_t i = 0; i < ARRAY_SIZE(modes_to_try); i++) 
-    {
-		valid_mode_found = hid_sci_mode_try(conn_idx, modes_to_try[i], params);
-		if (valid_mode_found) 
-        {
-			printk("Updated to the found valid SCI mode: %s\n", sci_mode_to_string(modes_to_try[i]));
-			break;
-		}
-	}
-
-	if (!valid_mode_found) 
-    {
-		int err;
-
-		printk("No valid SCI mode found. Defaulting to NONE\n");
-		err = bt_hids_sci_mode_updated(conn_mode[conn_idx].conn, BT_HIDS_SCI_MODE_NONE);
-		if (!err) 
-        {
-			printk("SCI mode updated to: NONE for connection %zu\n", conn_idx);
-		} 
-        else 
-        {
-			printk("Failed to update SCI mode: %d\n", err);
-		}
-	}
-}
-
-static void conn_rate_changed(struct bt_conn *conn, uint8_t status, const struct bt_conn_le_conn_rate_changed *params)
-{
-	size_t i;
-	enum bt_hids_sci_mode_value requested_sci_mode;
-	bool mode_ok = false;
-
-	for (i = 0; i < ARRAY_SIZE(conn_mode); i++) 
-    {
-		if (conn_mode[i].conn == conn) 
-        {
-			break;
-		}
-	}
-
-	if (i >= ARRAY_SIZE(conn_mode)) 
-    {
-		return;
-	}
-
-	if (status != BT_HCI_ERR_SUCCESS) 
-    {
-		printk("Connection %zu: Connection rate change failed: 0x%02x %s\n", i, status, bt_hci_err_to_str(status));
-		return;
-	}
-
-	printk(
-		"\nConnection %zu: Connection rate changed:\n"
-		" interval us: %u\n"
-		" subrate factor: %u\n"
-		" peripheral latency: %u\n"
-		" continuation number: %u\n"
-		" supervision timeout (10ms units): %u\n",
-		i,
-		params->interval_us,
-		params->subrate_factor,
-		params->peripheral_latency,
-		params->continuation_number,
-		params->supervision_timeout_10ms
-	);
-
-	requested_sci_mode = conn_mode[i].requested_sci_mode;
-	conn_mode[i].requested_sci_mode = BT_HIDS_SCI_MODE_NONE;
-
-	/* In case a connection rate change is received without a prior HID SCI mode change request,
-	 * or if a HID SCI mode change was requested but the new connection rate parameters
-	 * are not valid for the requested mode, this sample first checks if the new parameters
-	 * are valid for the current SCI mode.
-	 * If not, it attempts to find a valid SCI mode by cycling through the available SCI modes
-	 * from the most restrictive (FAST) to the least restrictive (FULL_RANGE) mode.
-	 * If no valid SCI mode is found, the sample defaults to the NONE mode.
-	 *
-	 * In a real application a different approach might be chosen,
-	 * e.g. default to the FULL_RANGE mode right away.
-	 */
-	if (requested_sci_mode == BT_HIDS_SCI_MODE_NONE) 
-    {
-		printk("No pending HID SCI mode change request\n");
-	} 
-    else 
-    {
-		mode_ok = hid_sci_mode_try(i, requested_sci_mode, params);
-	}
-
-	if (!mode_ok) 
-    {
-		enum bt_hids_sci_mode_value current_sci_mode;
-		int err = bt_hids_sci_mode_get(conn, &current_sci_mode);
-
-		if (err) 
-        {
-			printk("Failed to get current SCI mode: %d\n", err);
-		} 
-        else 
-        {
-			printk("Validating parameters for the current mode %s\n", sci_mode_to_string(current_sci_mode));
-
-			mode_ok = bt_hids_sci_mode_validate(current_sci_mode, params);
-
-			if (mode_ok) 
-            {
-				printk("Parameters are valid for the current mode. No action needed.\n");
-			} 
-            else 
-            {
-				printk("Invalid SCI mode parameters for current mode.\n");
-			}
-		}
-	}
-
-	if (!mode_ok) 
-    {
-		find_valid_sci_mode(i, params);
-	}
-}
-#endif
-
 BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = connected,
 	.disconnected = disconnected,
 #ifdef CONFIG_SAMPLE_BT_HIDS_SECURITY
 	.security_changed = security_changed,
 #endif /* CONFIG_SAMPLE_BT_HIDS_SECURITY */
-#ifdef CONFIG_BT_HIDS_SCI
-	.conn_rate_changed = conn_rate_changed,
-#endif /* CONFIG_BT_HIDS_SCI */
 };
 
 static void hids_pm_evt_handler(enum bt_hids_pm_evt evt, struct bt_conn *conn)
 {
-	char addr[BT_ADDR_LE_STR_LEN];
-	size_t i;
-
-	for (i = 0; i < ARRAY_SIZE(conn_mode); i++) 
-    {
-		if (conn_mode[i].conn == conn) 
-        {
-			break;
-		}
-	}
-
-	if (i >= ARRAY_SIZE(conn_mode)) 
+	if (conn != s_conn) 
     {
 		return;
 	}
-
-	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
 	switch (evt) 
     {
 	case BT_HIDS_PM_EVT_BOOT_MODE_ENTERED:
-		printk("Boot mode entered %s\n", addr);
-		conn_mode[i].in_boot_mode = true;
+		printk("Boot mode entered\n");
+		s_in_boot_mode = true;
 		break;
 
 	case BT_HIDS_PM_EVT_REPORT_MODE_ENTERED:
-		printk("Report mode entered %s\n", addr);
-		conn_mode[i].in_boot_mode = false;
+		printk("Report mode entered\n");
+		s_in_boot_mode = false;
 		break;
 
 	default:
 		break;
-	}
-}
-
-static void conn_cp_evt_handler(enum bt_hids_cp_evt evt, struct bt_conn *conn)
-{
-	const char *evt_str = "UNKNOWN";
-	enum bt_hids_sci_mode_value new_mode = BT_HIDS_SCI_MODE_NONE;
-	size_t i;
-
-	for (i = 0; i < ARRAY_SIZE(conn_mode); i++) 
-    {
-		if (conn_mode[i].conn == conn) 
-        {
-			break;
-		}
-	}
-
-	if (i >= ARRAY_SIZE(conn_mode)) 
-    {
-		return;
-	}
-
-	switch (evt) 
-    {
-	case BT_HIDS_CP_EVT_HOST_SUSP:
-		evt_str = "SUSP";
-		break;
-	case BT_HIDS_CP_EVT_HOST_EXIT_SUSP:
-		evt_str = "EXIT_SUSP";
-		break;
-	case BT_HIDS_CP_EVT_HOST_SCI_DEFAULT_REQ:
-		evt_str = "SCI_DEFAULT_REQ";
-		new_mode = BT_HIDS_SCI_MODE_DEFAULT;
-		break;
-	case BT_HIDS_CP_EVT_HOST_SCI_FAST_REQ:
-		evt_str = "SCI_FAST_REQ";
-		new_mode = BT_HIDS_SCI_MODE_FAST;
-		break;
-	case BT_HIDS_CP_EVT_HOST_SCI_LOW_POWER_REQ:
-		evt_str = "SCI_LOW_POWER_REQ";
-		new_mode = BT_HIDS_SCI_MODE_LOW_POWER;
-		break;
-	case BT_HIDS_CP_EVT_HOST_SCI_FULL_RANGE_REQ:
-		evt_str = "SCI_FULL_RANGE_REQ";
-		new_mode = BT_HIDS_SCI_MODE_FULL_RANGE;
-		break;
-	default:
-		evt_str = "UNKNOWN";
-		break;
-	}
-
-	printk("Control point event received for connection %u: %s\n", i, evt_str);
-
-	if (new_mode != BT_HIDS_SCI_MODE_NONE) 
-    {
-		int err = bt_hids_sci_mode_change_request(conn, new_mode);
-
-		if (!err) 
-        {
-			conn_mode[i].requested_sci_mode = new_mode;
-		} 
-        else 
-        {
-			printk("Failed to request SCI mode change: %d\n", err);
-		}
 	}
 }
 
@@ -865,18 +476,10 @@ static void hid_init(void)
 
 	hids_init_param.is_mouse = true;
 	hids_init_param.pm_evt_handler = hids_pm_evt_handler;
-	if (IS_ENABLED(CONFIG_BT_HIDS_SCI)) 
-    {
-		hids_init_param.conn_cp_evt_handler = conn_cp_evt_handler;
-	}
 
 	err = bt_hids_init(&hids_obj, &hids_init_param);
 	__ASSERT(err == 0, "HIDS initialization failed\n");
 }
-
-#if CONFIG_SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING
-static void report_sent(struct bt_conn *conn, void *user_data);
-#endif
 
 static void movement_sent(struct bt_conn *conn, void *user_data)
 {
@@ -889,30 +492,23 @@ static void movement_sent(struct bt_conn *conn, void *user_data)
 	}
 }
 
-static int mouse_movement_send_single(int16_t x_delta, int16_t y_delta, struct conn_mode *mode, bool cont_tx_mode)
+static void mouse_movement_send(int16_t x_delta, int16_t y_delta)
 {
-	int err = 0;
-	bt_gatt_complete_func_t report_sent_cb = cont_tx_mode ? NULL : movement_sent;
-	void *user_data = NULL;
+	int err;
 
-#if CONFIG_SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING
-	if (cont_tx_mode) {
-		report_sent_cb = report_sent;
-		user_data = (void *) mode->cont_report_tx_seq;
-	}
-#endif
-
-	if (!cont_tx_mode)
+	if (!s_conn)
 	{
-		atomic_inc(&movement_in_flight);
+		return;
 	}
 
-	if (mode->in_boot_mode) 
+	atomic_inc(&movement_in_flight);
+
+	if (s_in_boot_mode) 
     {
 		int8_t x_delta_sat = MAX(MIN(x_delta, SCHAR_MAX), SCHAR_MIN);
 		int8_t y_delta_sat = MAX(MIN(y_delta, SCHAR_MAX), SCHAR_MIN);
 
-		err = bt_hids_boot_mouse_inp_rep_send(&hids_obj, mode->conn, NULL, x_delta_sat, y_delta_sat, report_sent_cb);
+		err = bt_hids_boot_mouse_inp_rep_send(&hids_obj, s_conn, NULL, x_delta_sat, y_delta_sat, movement_sent);
 	} 
     else 
     {
@@ -934,31 +530,13 @@ static int mouse_movement_send_single(int16_t x_delta, int16_t y_delta, struct c
 		buffer[1] = (y_buff[0] << 4) | (x_buff[1] & 0x0f);
 		buffer[2] = (y_buff[1] << 4) | (y_buff[0] >> 4);
 
-		err = bt_hids_inp_rep_send_userdata(&hids_obj, mode->conn, INPUT_REP_MOVEMENT_INDEX, buffer, sizeof(buffer), report_sent_cb, user_data);
+		err = bt_hids_inp_rep_send_userdata(&hids_obj, s_conn, INPUT_REP_MOVEMENT_INDEX, buffer, sizeof(buffer), movement_sent, NULL);
 	}
 
 	if (err) 
     {
 		printk("Failed to send report: %d\n", err);
-		if (!cont_tx_mode)
-		{
-			atomic_dec(&movement_in_flight);
-		}
-	}
-
-	return err;
-}
-
-static void mouse_movement_send(int16_t x_delta, int16_t y_delta)
-{
-	for (size_t i = 0; i < ARRAY_SIZE(conn_mode); i++) 
-    {
-		if (!conn_mode[i].conn) 
-        {
-			continue;
-		}
-
-		(void) mouse_movement_send_single(x_delta, y_delta, &conn_mode[i], false);
+		atomic_dec(&movement_in_flight);
 	}
 }
 
@@ -978,7 +556,7 @@ static void mouse_handler(struct k_work *work)
 	}
 
 	/* movement_sent() resubmits this work once an in-flight report completes. */
-	if (atomic_get(&movement_in_flight) > (atomic_val_t)(MOVEMENT_MAX_IN_FLIGHT - ARRAY_SIZE(conn_mode)) || (!pending_x && !pending_y))
+	if (atomic_get(&movement_in_flight) >= MOVEMENT_MAX_IN_FLIGHT || (!pending_x && !pending_y))
 	{
 		return;
 	}
@@ -987,168 +565,6 @@ static void mouse_handler(struct k_work *work)
 	pending_x = 0;
 	pending_y = 0;
 }
-
-#if CONFIG_SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING
-static void cont_report_tx(struct bt_conn *conn)
-{
-	if (!atomic_get(&cont_report_tx_on)) 
-    {
-		return;
-	}
-
-	size_t i = 0;
-	struct conn_mode *mode = NULL;
-
-	for (i = 0; i < ARRAY_SIZE(conn_mode); i++) 
-    {
-		if (conn_mode[i].conn == conn) 
-        {
-			mode = &conn_mode[i];
-			break;
-		}
-	}
-
-	if (!mode) 
-    {
-		printk("Connection mode not found for connection");
-		return;
-	}
-
-	mode->cont_report_tx_seq++;
-
-	/** Allow up to 2 unACKed report in flight so the next prep can still schedule
-	 *  the next report while the previous one is awaiting the report_sent callback.
-	 *  With CONFIG_BT_ATT_SENT_CB_AFTER_TX=y the callback for a TX in connection event X
-	 *  arrives in connection event X+1.
-	 *  If more than one report is pending, the next report will be skipped so that
-	 *  the pipeline won't be filled up.
-	 */
-	if (atomic_get(&mode->cont_report_tx_pending_reports) >= 2) 
-    {
-		mode->cont_report_tx_skipped++;
-		return;
-	}
-
-	struct mouse_pos pos = { 0, 0 };
-
-	int err = mouse_movement_send_single(pos.x_val, pos.y_val, mode, true);
-
-	if (!err) 
-    {
-		atomic_inc(&mode->cont_report_tx_pending_reports);
-	}
-}
-
-static void report_sent(struct bt_conn *conn, void *user_data)
-{
-	struct conn_mode *mode = NULL;
-
-	for (size_t i = 0; i < ARRAY_SIZE(conn_mode); i++) 
-    {
-		if (conn_mode[i].conn == conn) 
-        {
-			mode = &conn_mode[i];
-			break;
-		}
-	}
-
-	if (!mode) 
-    {
-		printk("Connection mode not found for connection");
-		return;
-	}
-
-	if (user_data != NULL) 
-    {
-		uint32_t current_seq = mode->cont_report_tx_seq;
-		uint32_t original_seq = (uint32_t)user_data;
-
-		if (current_seq - original_seq > 1) 
-        {
-			mode->cont_report_tx_delayed_reps++;
-		}
-	}
-
-	atomic_dec(&mode->cont_report_tx_pending_reports);
-
-	if (!IS_ENABLED(CONFIG_BT_RADIO_NOTIFICATION_CONN_CB)) 
-    {
-		cont_report_tx(conn);
-	}
-}
-
-static void continuous_report_tx_start(struct k_work *work)
-{
-	atomic_set(&cont_report_tx_on, 1);
-
-	printk("Starting continuous report sending\n");
-
-	for (size_t i = 0; i < ARRAY_SIZE(conn_mode); i++) 
-    {
-		if (conn_mode[i].conn) 
-        {
-			conn_mode[i].cont_report_tx_seq = 0;
-			conn_mode[i].cont_report_tx_delayed_reps = 0;
-			conn_mode[i].cont_report_tx_skipped = 0;
-			/*
-			 * At the start of continuous report sending,
-			 * send two reports to each connected device.
-			 * This will ensure that a report is sent each
-			 * connection event.
-			 */
-			if (!IS_ENABLED(CONFIG_BT_RADIO_NOTIFICATION_CONN_CB)) 
-            {
-				cont_report_tx(conn_mode[i].conn);
-				cont_report_tx(conn_mode[i].conn);
-			}
-		}
-	}
-}
-
-static void continuous_report_tx_stop(void)
-{
-	if (!atomic_clear(&cont_report_tx_on)) 
-    {
-		return;
-	}
-
-	printk("Continuous report sending stopped\n");
-
-	/* Report statistics are only available
-	 * on platforms that support radio notification connection callbacks.
-	 */
-	if (IS_ENABLED(CONFIG_BT_RADIO_NOTIFICATION_CONN_CB)) 
-    {
-		for (size_t i = 0; i < ARRAY_SIZE(conn_mode); i++) 
-        {
-			if (conn_mode[i].conn) 
-            {
-				printk("Connection %zu statistics:\n", i);
-				printk(" Overall connection intervals: %" PRIu32 "\n",
-					conn_mode[i].cont_report_tx_seq);
-				/* Delayed report statistics are not available in boot mode */
-				if (!conn_mode[i].in_boot_mode) 
-                {
-					printk(" Delayed HID reports (retransmissions): %" PRIu32 "\n", conn_mode[i].cont_report_tx_delayed_reps);
-				}
-				printk(" Skipped connection intervals: %" PRIu32 "\n", conn_mode[i].cont_report_tx_skipped);
-				printk("\n");
-			}
-		}
-	}
-}
-
-#if CONFIG_BT_RADIO_NOTIFICATION_CONN_CB
-static void radio_notification_conn_cb(struct bt_conn *conn)
-{
-	cont_report_tx(conn);
-}
-
-static const struct bt_radio_notification_conn_cb radio_notification_conn_callbacks = {
-	.prepare = radio_notification_conn_cb,
-};
-#endif /* CONFIG_BT_RADIO_NOTIFICATION_CONN_CB */
-#endif /* CONFIG_SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING */
 
 #if defined(CONFIG_SAMPLE_BT_HIDS_SECURITY_MITM)
 static void auth_passkey_display(struct bt_conn *conn, unsigned int passkey)
@@ -1363,22 +779,9 @@ bool im_hids_mouse_init(void)
 /* Must be called after bt_enable(). */
 bool im_hids_mouse_start(void)
 {
-#if defined(CONFIG_SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING) && \
-	defined(CONFIG_BT_RADIO_NOTIFICATION_CONN_CB)
-	int err = bt_radio_notification_conn_cb_register(&radio_notification_conn_callbacks, CONFIG_SAMPLE_BT_HIDS_CONTINUOUS_REPORT_SENDING_PREPARE_DISTANCE_US);
-	if (err) 
-    {
-		printk("Failed registering radio notification callback (err %d)\n", err);
-		return false;
-	}
-#endif
-
 	k_work_init(&hids_work, mouse_handler);
 	k_work_init(&adv_work, advertising_process);
 
-#if CONFIG_SAMPLE_BT_DIRECTED_ADVERTISING
-	k_work_init_delayable(&low_duty_directed_adv_timeout_work, low_duty_directed_adv_timeout_handler);
-#endif
 	if (IS_ENABLED(CONFIG_SAMPLE_BT_HIDS_SECURITY_MITM)) 
     { 
         k_work_init(&pairing_work, pairing_process);
