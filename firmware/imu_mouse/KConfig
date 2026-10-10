@@ -29,6 +29,20 @@ config SAMPLE_BT_DIRECTED_ADVERTISING
 	default y
 	depends on SAMPLE_BT_HIDS_SECURITY
 
+choice IM_BUTTON_MODE
+	prompt "Button 1 function"
+	default IM_BUTTON_MODE_CLICK
+	help
+	  What button 1 does once the passkey pairing is not pending.
+
+config IM_BUTTON_MODE_CLICK
+	bool "Left mouse button (click and hold)"
+
+config IM_BUTTON_MODE_SENSITIVITY
+	bool "Cycle cursor sensitivity"
+
+endchoice
+
 endmenu
 
 source "Kconfig.zephyr"

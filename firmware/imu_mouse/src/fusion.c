@@ -4,6 +4,26 @@
 #include "fusion.h"
 #include "imu.h"
 
+/*
+ * Sensor fusion: gyro + accelerometer -> yaw/pitch rates for the cursor.
+ *
+ * Orientation is a unit quaternion integrated from the gyro and corrected by the accelerometer
+ * (Mahony complementary filter, proportional term only):
+ *   - The gyro is smooth and precise short-term, but its bias makes the angle drift.
+ *   - The accelerometer measures gravity, which gives an absolute tilt (roll/pitch), but is
+ *     noisy and wrong while the device accelerates. It is trusted only when |a| is close to 1 g.
+ *   - The error between measured and estimated "up" (cross product) is fed back into the gyro
+ *     rate with gain FUSION_KP, which pulls the tilt estimate toward gravity.
+ *   - Gravity says nothing about yaw, so yaw is gyro-only; its drift is limited by bias removal.
+ *
+ * Gyro bias is removed in two steps: an averaged startup calibration (device must lie still),
+ * then a slow low-pass update while the device is detected as stationary. Rates under a small
+ * deadzone are zeroed while stationary so the cursor does not creep.
+ *
+ * The output rates are taken about gravity (yaw) and about the horizontal part of body Y (pitch),
+ * so the cursor motion does not depend on how the device is rolled.
+ */
+
 #define GRAVITY 9.80665f
 #define FUSION_DT (1.0f / IM_IMU_SAMPLE_RATE_HZ)
 // Mahony proportional gain (rad/s per unit error): higher trusts the accelerometer more

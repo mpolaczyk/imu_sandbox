@@ -13,6 +13,9 @@ bool im_hids_mouse_pairing_pending(void);
 /* Accepts or rejects the pending pairing passkey. */
 void im_hids_mouse_pairing_reply(bool accept);
 
+/* Sets the left mouse button state; reported to the host in order with movement. */
+void im_hids_mouse_button(bool left_down);
+
 /* Queues a relative movement; drops it and warns if the queue is full. */
 void im_hids_mouse_move(int16_t dx, int16_t dy);
 

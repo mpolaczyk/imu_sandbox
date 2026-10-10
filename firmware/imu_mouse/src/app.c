@@ -6,26 +6,43 @@
 #include "fusion.h"
 #include "hids_mouse.h"
 
-// Integers on purpose: sensitivity is changed from a non-FPU thread
+// Integers on purpose: level 2 (2500) is the default
 static const int s_px_per_rad[] = {1500, 2000, 2500, 3000, 3500, 4000};
-static volatile uint8_t s_sens_idx = 2;
+static uint8_t s_sens_idx = 2;
 // Mounting-dependent: yaw (gyro Z) -> X, pitch (gyro Y) -> Y; roll (gyro X) is ignored
 #define MOUSE_X_SIGN (-1.0f)
-#define MOUSE_Y_SIGN (-1.0f)
+#define MOUSE_Y_SIGN (1.0f) // Cable to back
 
 // Sub-pixel remainders carried between samples
 static float s_mouse_rem_x;
 static float s_mouse_rem_y;
 
-void im_app_on_button1(void)
+// A press that confirmed pairing must not produce a click release
+static bool s_press_used_for_pairing;
+
+void im_app_on_button(bool pressed)
 {
-	if (im_hids_mouse_pairing_pending())
+	if (pressed && im_hids_mouse_pairing_pending())
 	{
+		s_press_used_for_pairing = true;
 		im_hids_mouse_pairing_reply(true);
 		return;
 	}
-	s_sens_idx = (s_sens_idx + 1) % ARRAY_SIZE(s_px_per_rad);
-	printk("Sensitivity: %d px/rad\n", s_px_per_rad[s_sens_idx]);
+	if (!pressed && s_press_used_for_pairing)
+	{
+		s_press_used_for_pairing = false;
+		return;
+	}
+	if (IS_ENABLED(CONFIG_IM_BUTTON_MODE_SENSITIVITY))
+	{
+		if (pressed)
+		{
+			s_sens_idx = (s_sens_idx + 1) % ARRAY_SIZE(s_px_per_rad);
+			printk("Sensitivity: %d px/rad\n", s_px_per_rad[s_sens_idx]);
+		}
+		return;
+	}
+	im_hids_mouse_button(pressed);
 }
 
 void im_app_on_sample(float gx, float gy, float gz, float ax, float ay, float az)

@@ -74,9 +74,9 @@ static void s_button_work_fn(struct k_work *work)
 {
 	ARG_UNUSED(work);
 	const bool down = gpio_pin_get_dt(&s_button) > 0;
-	if (down && !s_button_down && s_button_cb)
+	if (down != s_button_down && s_button_cb)
 	{
-		s_button_cb();
+		s_button_cb(down);
 	}
 	s_button_down = down;
 }
