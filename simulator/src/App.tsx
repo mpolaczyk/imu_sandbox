@@ -68,7 +68,7 @@ function App() {
   }, [client])
 
   const liveOrientation = useMemo(() => {
-    if (!livePose?.orientationValid) {
+    if (!livePose) {
       return null
     }
     const deviceOrientation = poseQuaternion(livePose)

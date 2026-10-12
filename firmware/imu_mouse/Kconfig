@@ -1,19 +1,26 @@
 menu "IMU Mouse"
 
-config IMU_BLE_SAMPLE_RATE_HZ
-	int "BLE pose notification rate (Hz)"
-	range 1 100
-	default 50
+choice IM_BLE_DEVICE
+	prompt "BLE device"
+	default IM_BLE_DEVICE_IMU
 	help
-	  Maximum notification rate for the custom BLE pose service.
+	  Only the selected device is compiled, initialized and advertised.
 
-config IMU_BLE_SYNTHETIC_DATA
-	bool "Send synthetic pose data over BLE"
-	default n
+config IM_BLE_DEVICE_IMU
+	bool "IMU pose streaming (custom GATT service)"
+
+config IM_BLE_DEVICE_MOUSE
+	bool "HID mouse"
+
+endchoice
+
+config IM_IMU_SAMPLE_RATE_HZ
+	int "imu update rate"
+	range 52 416
+	default 208
 	help
-	  Stream a slowly rotating synthetic pose instead of the fused sensor pose.
-	  The existing mouse continues to use real sensor fusion.
-
+		12, 26, 52, 104, 208, 416, 833, 1666, 3332 and 6664 Hz
+		
 config SAMPLE_BT_HIDS_SECURITY
 	bool "Bluetooth LE security"
 	default y
@@ -40,7 +47,7 @@ config SAMPLE_BT_HIDS_SECURITY_MITM
 
 config SAMPLE_BT_DIRECTED_ADVERTISING
 	bool "Directed advertising"
-	default y
+	default n
 	depends on SAMPLE_BT_HIDS_SECURITY
 
 endmenu

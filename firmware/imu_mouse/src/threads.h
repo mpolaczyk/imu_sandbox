@@ -6,6 +6,10 @@
 #define IM_IMU_THREAD_PRIORITY K_HIGHEST_APPLICATION_THREAD_PRIO
 #define IM_IMU_THREAD_OPTIONS K_FP_REGS
 
+// BLE sender thread - Preemptive: may block in bt_gatt_notify, so it must not run in the IMU thread
+#define IM_BLE_SENDER_THREAD_STACK_SIZE 1024
+#define IM_BLE_SENDER_THREAD_PRIORITY 5
+
 // Main thread - Preemptive: runs at CONFIG_MAIN_THREAD_PRIORITY, preempted by the IMU thread
 #define IM_MAIN_THREAD_PERIOD_MS 500
 

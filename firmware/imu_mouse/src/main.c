@@ -18,7 +18,7 @@ int main(void)
 		switch (im_state_get())
 		{
 		case IM_APP_STATE_INIT_1:
-			if(im_gpio_init())
+			if (im_gpio_init())
 			{
 				im_gpio_thread_start();
 				im_state_set(IM_APP_STATE_INIT_2);
@@ -46,14 +46,19 @@ int main(void)
 			break;
 
 		case IM_APP_STATE_INIT_3:
-			if(im_hids_mouse_init() && imu_ble_init() && im_hids_mouse_start() && im_gpio_button_init(im_app_on_button1))
+#if defined(CONFIG_IM_BLE_DEVICE_MOUSE)
+			if (im_hids_mouse_init() && im_hids_mouse_start() && im_gpio_button_init(im_app_on_button1))
+#else
+			if (imu_ble_init() && imu_ble_start() && im_gpio_button_init(im_app_on_button1))
+#endif
 			{
-				im_state_set(IM_APP_STATE_RUNNING);
+				im_state_set(IM_APP_STATE_CALIBRATING);
 				break;
 			}
 			im_state_set(IM_APP_STATE_FAIL);
 			break;
 
+		case IM_APP_STATE_CALIBRATING:
 		case IM_APP_STATE_RUNNING:
 			k_sleep(K_MSEC(IM_MAIN_THREAD_PERIOD_MS));
 			break;
@@ -63,3 +68,10 @@ int main(void)
 		}
 	}
 }
+
+// Bluetooth issues in Chrome
+// chrome://flags/
+// Use the new permissions backend for Web Bluetooth: Enabled -> Relaunch
+// chrome://settings/content/bluetoothDevices -> Sites can ask...
+// https://googlechrome.github.io/samples/web-bluetooth/device-info.html?allDevices=true
+// To check if Chrome detects devices

@@ -11,13 +11,10 @@
 #define IMU_BLE_INFO_UUID_BYTES \
 	0x9e, 0xca, 0xcc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0, 0x93, 0xf3, 0xa3, 0xb5, 0x03, 0x00, 0x40, 0x7e
 
-#define IMU_BLE_PROTOCOL_VERSION 1
-#define IMU_BLE_POSE_FRAME_SIZE 22
+#define IMU_BLE_POSE_FRAME_SIZE 20
 
 struct imu_pose
 {
-	bool orientation_valid;
-	bool button_pressed;
 	float qw;
 	float qx;
 	float qy;
@@ -27,7 +24,11 @@ struct imu_pose
 	float gz_rad_s;
 };
 
-int imu_ble_init(void);
-void imu_ble_send_pose(const struct imu_pose *pose);
+bool imu_ble_init(void);
+
+/* Must be called after imu_ble_init(). */
+bool imu_ble_start(void);
+
+void imu_ble_push_pose(const struct imu_pose *pose);
 
 #endif

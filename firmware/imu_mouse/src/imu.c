@@ -3,6 +3,7 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/drivers/i2c.h>
+#include <zephyr/drivers/gpio.h>
 
 #include "imu.h"
 #include "state.h"
@@ -13,12 +14,16 @@
 #define IMU_REG_WHO_AM_I 0x0F
 #define IMU_READY_TIMEOUT_MS 2000
 #define IMU_READY_POLL_MS 5
+#define IMU_WATCHDOG_MS 50
 
 // Internal linkage
 
 static K_THREAD_STACK_DEFINE(s_imu_thread_stack, IM_IMU_THREAD_STACK_SIZE);
 static struct k_thread s_imu_thread_data;
 static K_SEM_DEFINE(s_imu_data_ready, 0, 1);
+static atomic_t s_data_ready_count;
+static atomic_t s_sample_count;
+static atomic_t s_watchdog_count;
 
 static struct sensor_value s_accel[3];
 static struct sensor_value s_gyro[3];
@@ -29,6 +34,7 @@ static void s_imu_data_ready_handler(const struct device *dev, const struct sens
 {
 	ARG_UNUSED(dev);
 	ARG_UNUSED(trig);
+	atomic_inc(&s_data_ready_count);
 	k_sem_give(&s_imu_data_ready);
 }
 
@@ -39,11 +45,24 @@ static void s_imu_thread_fn(void *p1, void *p2, void *p3)
 	ARG_UNUSED(p3);
 	while (1)
 	{
-		k_sem_take(&s_imu_data_ready, K_FOREVER);
+		// On timeout still read: the edge-triggered DRDY line stays high (no more IRQs) if samples were missed while blocked
+		const bool irq_ok = k_sem_take(&s_imu_data_ready, K_MSEC(IMU_WATCHDOG_MS)) == 0;
+		if (!irq_ok)
+		{
+			atomic_inc(&s_watchdog_count);
+		}
 		if (!im_imu_collect(PRINT_MEASUREMENT))
 		{
 			im_state_set(IM_APP_STATE_FAIL);
 			return;
+		}
+		atomic_inc(&s_sample_count);
+		static int64_t s_next_report_ms;
+		const int64_t now_ms = k_uptime_get();
+		if (now_ms >= s_next_report_ms)
+		{
+			printk("IMU: irq=%d processed=%d watchdog=%d per s\n", (int)atomic_set(&s_data_ready_count, 0), (int)atomic_set(&s_sample_count, 0), (int)atomic_set(&s_watchdog_count, 0));
+			s_next_report_ms = now_ms + 1000;
 		}
 	}
 }
@@ -133,7 +152,7 @@ bool im_imu_init(const bool delay_init, const bool configure_sampling)
 	if(configure_sampling)
 	{
 		printk("IMU configuring sampling\n");
-		odr_attr.val1 = IM_IMU_SAMPLE_RATE_HZ;
+		odr_attr.val1 = CONFIG_IM_IMU_SAMPLE_RATE_HZ;
 		odr_attr.val2 = 0;
 		if (sensor_attr_set(s_imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) 
 		{

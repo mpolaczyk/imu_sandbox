@@ -21,6 +21,7 @@ static void s_gpio_thread_fn(void *p1, void *p2, void *p3)
 		enum im_app_state state = im_state_get();
 		switch (state)
 		{
+		case IM_APP_STATE_INIT_1:
 		case IM_APP_STATE_INIT_2:
 		case IM_APP_STATE_INIT_3:
 			if (!im_gpio_led_toggle_only(IM_GPIO_LED_GREEN))
@@ -29,8 +30,15 @@ static void s_gpio_thread_fn(void *p1, void *p2, void *p3)
 			}
 			break;
 
-		case IM_APP_STATE_RUNNING:
+		case IM_APP_STATE_CALIBRATING:
 			if (!im_gpio_led_toggle_only(IM_GPIO_LED_BLUE))
+			{
+				im_state_set(IM_APP_STATE_FAIL);
+			}
+			break;
+
+		case IM_APP_STATE_RUNNING:
+			if (!im_gpio_led_set_only(IM_GPIO_LED_BLUE))
 			{
 				im_state_set(IM_APP_STATE_FAIL);
 			}
@@ -112,6 +120,11 @@ bool im_gpio_init()
 	return true;
 }
 
+bool im_gpio_button_is_pressed(void)
+{
+	return atomic_get(&s_button_down) != 0;
+}
+
 bool im_gpio_button_init(im_gpio_button_cb_t cb)
 {
 	if (!gpio_is_ready_dt(&s_button))
@@ -120,10 +133,6 @@ bool im_gpio_button_init(im_gpio_button_cb_t cb)
 		return false;
 	}
 
-	bool im_gpio_button_is_pressed(void)
-	{
-		return atomic_get(&s_button_down) != 0;
-	}
 	if (gpio_pin_configure_dt(&s_button, GPIO_INPUT) < 0)
 	{
 		printk("Error: Button GPIO configuration failed\n");

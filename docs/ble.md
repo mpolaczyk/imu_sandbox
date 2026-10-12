@@ -12,31 +12,29 @@ arrays in `firmware/imu_mouse/src/imu_ble.h` use Bluetooth's little-endian
 
 | GATT item | UUID | Properties |
 | --- | --- | --- |
-| IMU Pose service | `7e400001-b5a3-f393-e0a9-e50e24dcca9e` | Primary service |
-| Pose characteristic | `7e400002-b5a3-f393-e0a9-e50e24dcca9e` | Notify |
-| Control/Info characteristic | `7e400003-b5a3-f393-e0a9-e50e24dcca9e` | Read |
+| IMU Pose service | `7e400001-b5a3-f393-e0a9-e50e24ccca9e` | Primary service |
+| Pose characteristic | `7e400002-b5a3-f393-e0a9-e50e24ccca9e` | Notify |
+| Control/Info characteristic | `7e400003-b5a3-f393-e0a9-e50e24ccca9e` | Read |
 
-The Pose characteristic is a fixed 22-byte frame. Multi-byte fields are
+The Pose characteristic is a fixed 20-byte frame. Multi-byte fields are
 little-endian; offsets are from the start of the value.
 
 | Offset | Size | Type | Meaning |
 | ---: | ---: | --- | --- |
-| 0 | 1 | `uint8` | Protocol version (`1`) |
-| 1 | 1 | `uint8` | Flags: bit 0 orientation valid, bit 1 physical button pressed; other bits reserved |
-| 2 | 2 | `uint16` | Wrapping sequence number |
-| 4 | 4 | `uint32` | Device uptime in milliseconds |
-| 8 | 2 | `int16` | Quaternion `qw`, Q14 (divide by 16384) |
-| 10 | 2 | `int16` | Quaternion `qx`, Q14 |
-| 12 | 2 | `int16` | Quaternion `qy`, Q14 |
-| 14 | 2 | `int16` | Quaternion `qz`, Q14 |
-| 16 | 2 | `int16` | Gyro X, 0.01 degree/s per count |
-| 18 | 2 | `int16` | Gyro Y, 0.01 degree/s per count |
-| 20 | 2 | `int16` | Gyro Z, 0.01 degree/s per count |
+| 0 | 2 | `uint16` | Wrapping sequence number |
+| 2 | 4 | `uint32` | Device uptime in milliseconds |
+| 6 | 2 | `int16` | Quaternion `qw`, Q14 (divide by 16384) |
+| 8 | 2 | `int16` | Quaternion `qx`, Q14 |
+| 10 | 2 | `int16` | Quaternion `qy`, Q14 |
+| 12 | 2 | `int16` | Quaternion `qz`, Q14 |
+| 14 | 2 | `int16` | Gyro X, 0.01 degree/s per count |
+| 16 | 2 | `int16` | Gyro Y, 0.01 degree/s per count |
+| 18 | 2 | `int16` | Gyro Z, 0.01 degree/s per count |
 
 The quaternion is the fusion filter's body-to-world orientation. Gyro values
 are bias-corrected angular velocity. Firmware clamps fixed-point values to the
-`int16` range. The Control/Info value is four bytes: protocol version, sample
-rate in Hz (`uint16` little-endian), and mode (`0` fused sensor, `1` synthetic).
+`int16` range. The Control/Info value is three bytes: sample rate in Hz (`uint16`
+little-endian) and mode (`0` fused sensor, `1` synthetic).
 The default notification rate is 50 Hz and can be set from 1–100 Hz with
 `CONFIG_IMU_BLE_SAMPLE_RATE_HZ`. Set `CONFIG_IMU_BLE_SYNTHETIC_DATA=y` to stream
 a synthetic rotation over BLE while leaving the existing mouse path on sensor

@@ -1,17 +1,13 @@
-export const IMU_POSE_SERVICE_UUID = '7e400001-b5a3-f393-e0a9-e50e24dcca9e'
-export const IMU_POSE_CHARACTERISTIC_UUID = '7e400002-b5a3-f393-e0a9-e50e24dcca9e'
-export const IMU_INFO_CHARACTERISTIC_UUID = '7e400003-b5a3-f393-e0a9-e50e24dcca9e'
+// Keep it consistent with imu_ble.h
+export const IMU_POSE_SERVICE_UUID = '7e400001-b5a3-f393-e0a9-e50e24ccca9e'
+export const IMU_POSE_CHARACTERISTIC_UUID = '7e400002-b5a3-f393-e0a9-e50e24ccca9e'
+export const IMU_INFO_CHARACTERISTIC_UUID = '7e400003-b5a3-f393-e0a9-e50e24ccca9e'
 
-export const POSE_FRAME_SIZE = 22
-export const POSE_PROTOCOL_VERSION = 1
+export const POSE_FRAME_SIZE = 20
 
 export type PosePacket = {
-  version: number
-  flags: number
   sequence: number
   timestampMs: number
-  orientationValid: boolean
-  buttonPressed: boolean
   quaternion: [number, number, number, number]
   gyroDps: [number, number, number]
 }
@@ -52,16 +48,11 @@ export function parsePoseFrame(view: DataView): PosePacket {
     throw new Error(`Invalid pose frame length: expected ${POSE_FRAME_SIZE} bytes`)
   }
 
-  const version = view.getUint8(0)
-  if (version !== POSE_PROTOCOL_VERSION) {
-    throw new Error(`Unsupported pose protocol version: ${version}`)
-  }
-
   const quaternion = [
+    view.getInt16(6, true) / 16384,
     view.getInt16(8, true) / 16384,
     view.getInt16(10, true) / 16384,
     view.getInt16(12, true) / 16384,
-    view.getInt16(14, true) / 16384,
   ] as [number, number, number, number]
   const magnitude = Math.hypot(...quaternion)
   if (magnitude < 1e-6) {
@@ -69,17 +60,13 @@ export function parsePoseFrame(view: DataView): PosePacket {
   }
 
   return {
-    version,
-    flags: view.getUint8(1),
-    sequence: view.getUint16(2, true),
-    timestampMs: view.getUint32(4, true),
-    orientationValid: (view.getUint8(1) & 1) !== 0,
-    buttonPressed: (view.getUint8(1) & 2) !== 0,
+    sequence: view.getUint16(0, true),
+    timestampMs: view.getUint32(2, true),
     quaternion: quaternion.map((value) => value / magnitude) as [number, number, number, number],
     gyroDps: [
+      view.getInt16(14, true) / 100,
       view.getInt16(16, true) / 100,
       view.getInt16(18, true) / 100,
-      view.getInt16(20, true) / 100,
     ],
   }
 }
@@ -171,18 +158,21 @@ export class BlePoseClient {
     }
     const service = await server.getPrimaryService(IMU_POSE_SERVICE_UUID)
     const poseCharacteristic = await service.getCharacteristic(IMU_POSE_CHARACTERISTIC_UUID)
-    poseCharacteristic.addEventListener('characteristicvaluechanged', () => {
-      const value = poseCharacteristic.value
-      if (!value) {
-        return
-      }
-      try {
-        this.handlePose(parsePoseFrame(value))
-      } catch (error) {
-        this.emitError(error instanceof Error ? error : new Error(String(error)))
-      }
-    })
+	poseCharacteristic.addEventListener('characteristicvaluechanged', () => {
+		const value = poseCharacteristic.value
+		if (!value) {
+			return
+		}
+
+		try {
+			this.handlePose(parsePoseFrame(value))
+		} catch (error) {
+			console.error('[BLE] frame rejected', error, value)
+			this.emitError(error instanceof Error ? error : new Error(String(error)))
+		}
+	})
     await poseCharacteristic.startNotifications()
+    console.info('[BLE] startNotifications resolved')
     this.server = server
     this.lastSequence = null
     this.droppedPackets = 0
@@ -206,6 +196,11 @@ export class BlePoseClient {
     const elapsed = now - this.rateWindowStart
     if (elapsed >= 1000) {
       this.packetRate = (this.rateWindowPackets * 1000) / elapsed
+      console.info('[BLE] receiving pose notifications', {
+        packets: this.rateWindowPackets,
+        packetsPerSecond: Number(this.packetRate.toFixed(1)),
+        sequence: pose.sequence,
+      })
       this.rateWindowStart = now
       this.rateWindowPackets = 0
     }

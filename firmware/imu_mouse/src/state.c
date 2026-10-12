@@ -12,4 +12,5 @@ enum im_app_state im_state_get(void)
 void im_state_set(enum im_app_state state)
 {
 	atomic_set(&s_state, (atomic_val_t)state);
+	printk("Entering state: %d\n", state);
 }

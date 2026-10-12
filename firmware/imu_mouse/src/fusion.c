@@ -1,11 +1,12 @@
 #include <math.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/printk.h>
 
 #include "fusion.h"
 #include "imu.h"
 
 #define GRAVITY 9.80665f
-#define FUSION_DT (1.0f / IM_IMU_SAMPLE_RATE_HZ)
+#define FUSION_DT (1.0f / CONFIG_IM_IMU_SAMPLE_RATE_HZ)
 // Mahony proportional gain (rad/s per unit error): higher trusts the accelerometer more
 #define FUSION_KP 1.0f
 // Accelerometer is used for tilt correction only while |a| is within this of 1 g
@@ -13,12 +14,12 @@
 // Device counts as stationary when the bias-corrected gyro is below this
 #define STILL_GYRO_RAD_S 0.03f
 #define STILL_ACCEL_TOL (0.05f * GRAVITY)
-#define STILL_SAMPLES (IM_IMU_SAMPLE_RATE_HZ / 4)
+#define STILL_SAMPLES (CONFIG_IM_IMU_SAMPLE_RATE_HZ / 4)
 #define BIAS_ALPHA 0.002f
 // Output rates below this while stationary are suppressed
 #define STILL_DEADZONE_RAD_S 0.004f
 // Startup calibration: average this many still samples; any motion restarts it
-#define CAL_SAMPLES IM_IMU_SAMPLE_RATE_HZ
+#define CAL_SAMPLES CONFIG_IM_IMU_SAMPLE_RATE_HZ
 #define CAL_MOTION_RAD_S 0.05f
 
 static bool s_cal_done;
@@ -109,6 +110,7 @@ bool im_fusion_update(float gx, float gy, float gz, float ax, float ay, float az
 				s_bias[i] = s_cal_sum[i] / s_cal_count;
 			}
 			s_cal_done = true;
+			printk("IMU fusion calibration complete\n");
 		}
 		return false;
 	}
