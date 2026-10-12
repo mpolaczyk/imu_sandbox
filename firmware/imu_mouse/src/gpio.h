@@ -12,8 +12,8 @@ enum im_gpio_led
 void im_gpio_thread_start(void);
 bool im_gpio_init(void);
 
-/* Called from the system workqueue after a debounced press of button 1. */
-typedef void (*im_gpio_button_cb_t)(void);
+/* Called from the system workqueue on each debounced press (true) and release (false). */
+typedef void (*im_gpio_button_cb_t)(bool pressed);
 bool im_gpio_button_init(im_gpio_button_cb_t cb);
 bool im_gpio_button_is_pressed(void);
 

@@ -47,9 +47,9 @@ int main(void)
 
 		case IM_APP_STATE_INIT_3:
 #if defined(CONFIG_IM_BLE_DEVICE_MOUSE)
-			if (im_hids_mouse_init() && im_hids_mouse_start() && im_gpio_button_init(im_app_on_button1))
+			if (im_hids_mouse_init() && im_hids_mouse_start() && im_gpio_button_init(im_app_on_button))
 #else
-			if (imu_ble_init() && imu_ble_start() && im_gpio_button_init(im_app_on_button1))
+			if (imu_ble_init() && imu_ble_start() && im_gpio_button_init(im_app_on_button))
 #endif
 			{
 				im_state_set(IM_APP_STATE_CALIBRATING);

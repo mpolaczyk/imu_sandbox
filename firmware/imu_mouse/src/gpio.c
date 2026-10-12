@@ -83,9 +83,9 @@ static void s_button_work_fn(struct k_work *work)
 	ARG_UNUSED(work);
 	const bool down = gpio_pin_get_dt(&s_button) > 0;
 	const bool was_down = atomic_get(&s_button_down) != 0;
-	if (down && !was_down && s_button_cb)
+	if (down != was_down && s_button_cb)
 	{
-		s_button_cb();
+		s_button_cb(down);
 	}
 	atomic_set(&s_button_down, down);
 }

@@ -120,6 +120,18 @@ static const struct bt_data sd[] =
 static struct bt_conn *s_conn;
 static bool s_in_boot_mode;
 
+/* Wanted and last-delivered button state (bit 0 = left). */
+static uint8_t s_buttons;
+static uint8_t s_buttons_sent;
+
+static void button_retry_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	k_work_submit(&hids_work);
+}
+
+static K_WORK_DELAYABLE_DEFINE(button_retry_work, button_retry_fn);
+
 static bool is_adv_running;
 
 static struct k_work adv_work;
@@ -277,6 +289,8 @@ static void connected(struct bt_conn *conn, uint8_t err)
 
 	s_conn = conn;
 	s_in_boot_mode = false;
+	s_buttons = 0;
+	s_buttons_sent = 0;
 
 	err = bt_conn_le_param_update(conn, FAST_CONN_PARAM);
 	if (err)
@@ -305,6 +319,9 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	if (s_conn == conn)
 	{
 		s_conn = NULL;
+		s_buttons = 0;
+		s_buttons_sent = 0;
+		(void)k_work_cancel_delayable(&button_retry_work);
 	}
 
 	/* Completion callbacks are not guaranteed after a disconnect. */
@@ -492,6 +509,39 @@ static void movement_sent(struct bt_conn *conn, void *user_data)
 	}
 }
 
+#define BUTTON_RETRY_MS 10
+
+/* A lost release would leave the button stuck, so a failed send is retried. */
+static void buttons_flush(void)
+{
+	const uint8_t value = s_buttons;
+	int err;
+
+	if (!s_conn || value == s_buttons_sent)
+	{
+		return;
+	}
+
+	if (s_in_boot_mode)
+	{
+		err = bt_hids_boot_mouse_inp_rep_send(&hids_obj, s_conn, &value, 0, 0, NULL);
+	}
+	else
+	{
+		uint8_t report[INPUT_REP_BUTTONS_LEN] = { value, 0, 0 };
+
+		err = bt_hids_inp_rep_send_userdata(&hids_obj, s_conn, INPUT_REP_BUTTONS_INDEX, report, sizeof(report), NULL, NULL);
+	}
+
+	if (err)
+	{
+		printk("Failed to send button report: %d\n", err);
+		k_work_schedule(&button_retry_work, K_MSEC(BUTTON_RETRY_MS));
+		return;
+	}
+	s_buttons_sent = value;
+}
+
 static void mouse_movement_send(int16_t x_delta, int16_t y_delta)
 {
 	int err;
@@ -508,7 +558,7 @@ static void mouse_movement_send(int16_t x_delta, int16_t y_delta)
 		int8_t x_delta_sat = MAX(MIN(x_delta, SCHAR_MAX), SCHAR_MIN);
 		int8_t y_delta_sat = MAX(MIN(y_delta, SCHAR_MAX), SCHAR_MIN);
 
-		err = bt_hids_boot_mouse_inp_rep_send(&hids_obj, s_conn, NULL, x_delta_sat, y_delta_sat, movement_sent);
+		err = bt_hids_boot_mouse_inp_rep_send(&hids_obj, s_conn, &s_buttons_sent, x_delta_sat, y_delta_sat, movement_sent);
 	} 
     else 
     {
@@ -548,6 +598,8 @@ static int32_t pending_y;
 static void mouse_handler(struct k_work *work)
 {
 	struct mouse_pos pos;
+
+	buttons_flush();
 
 	while (!k_msgq_get(&hids_queue, &pos, K_NO_WAIT)) 
     {
@@ -725,6 +777,12 @@ bool im_hids_mouse_pairing_pending(void)
 void im_hids_mouse_pairing_reply(bool accept)
 {
 	num_comp_reply(accept);
+}
+
+void im_hids_mouse_button(bool left_down)
+{
+	s_buttons = left_down ? BIT(0) : 0;
+	k_work_submit(&hids_work);
 }
 
 void im_hids_mouse_move(int16_t dx, int16_t dy)
