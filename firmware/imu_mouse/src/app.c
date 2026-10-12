@@ -19,13 +19,11 @@ static uint8_t s_sens_idx = 2;
 // Sub-pixel remainders carried between samples
 static float s_mouse_rem_x;
 static float s_mouse_rem_y;
-#else
-#include "imu_ble.h"
-#endif
 
-#if defined(CONFIG_IM_BLE_DEVICE_MOUSE)
 // A press that confirmed pairing must not produce a click release
 static bool s_press_used_for_pairing;
+#elif defined(CONFIG_IM_BLE_DEVICE_GATT)
+#include "ble_gatt.h"
 #endif
 
 void im_app_on_button(bool pressed)
@@ -49,10 +47,12 @@ void im_app_on_button(bool pressed)
 			s_sens_idx = (s_sens_idx + 1) % ARRAY_SIZE(s_px_per_rad);
 			printk("Sensitivity: %d px/rad\n", s_px_per_rad[s_sens_idx]);
 		}
-		return;
 	}
-	im_hids_mouse_button(pressed);
-#else
+	else if(IS_ENABLED(CONFIG_IM_BUTTON_MODE_CLICK))
+	{
+		im_hids_mouse_button(pressed);
+	}
+#elif defined(CONFIG_IM_BLE_DEVICE_GATT)
 	ARG_UNUSED(pressed);
 #endif
 }
@@ -76,17 +76,7 @@ void im_app_on_sample(float gx, float gy, float gz, float ax, float ay, float az
 		im_state_set(IM_APP_STATE_RUNNING);
 	}
 
-#if defined(CONFIG_IM_BLE_DEVICE_IMU)
-	struct imu_pose pose = {0};
-	pose.qw = rates.qw;
-	pose.qx = rates.qx;
-	pose.qy = rates.qy;
-	pose.qz = rates.qz;
-	pose.gx_rad_s = rates.gx;
-	pose.gy_rad_s = rates.gy;
-	pose.gz_rad_s = rates.gz;
-	imu_ble_push_pose(&pose);
-#else
+#if defined(CONFIG_IM_BLE_DEVICE_MOUSE)
 	const float px_per_rad_sample = (float)s_px_per_rad[s_sens_idx] / CONFIG_IM_IMU_SAMPLE_RATE_HZ;
 	const float fx = s_mouse_rem_x + MOUSE_X_SIGN * rates.yaw * px_per_rad_sample;
 	const float fy = s_mouse_rem_y + MOUSE_Y_SIGN * rates.pitch * px_per_rad_sample;
@@ -98,5 +88,7 @@ void im_app_on_sample(float gx, float gy, float gz, float ax, float ay, float az
 	{
 		im_hids_mouse_move(dx, dy);
 	}
+#elif defined(CONFIG_IM_BLE_DEVICE_GATT)
+	im_ble_gatt_push_frame(rates.qw, rates.qx, rates.qy, rates.qz, rates.gx, rates.gy, rates.gz);
 #endif
 }

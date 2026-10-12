@@ -6,8 +6,6 @@ typedef void (*im_imu_sample_cb_t)(float gx, float gy, float gz, float ax, float
 
 void im_imu_set_sample_cb(im_imu_sample_cb_t cb);
 bool im_imu_thread_start(void);
-bool im_imu_init(const bool delay_init, const bool configure_sampling);
-
-bool im_imu_collect(const bool do_print);
+bool im_imu_init();
 
 #endif

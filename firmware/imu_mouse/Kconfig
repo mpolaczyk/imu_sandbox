@@ -2,16 +2,24 @@ menu "IMU Mouse"
 
 choice IM_BLE_DEVICE
 	prompt "BLE device"
-	default IM_BLE_DEVICE_IMU
+	default IM_BLE_DEVICE_GATT
 	help
 	  Only the selected device is compiled, initialized and advertised.
-
-config IM_BLE_DEVICE_IMU
+config IM_BLE_DEVICE_GATT
 	bool "IMU pose streaming (custom GATT service)"
-
 config IM_BLE_DEVICE_MOUSE
 	bool "HID mouse"
+endchoice
 
+choice IM_BUTTON_MODE
+	prompt "Button 1 function"
+	default IM_BUTTON_MODE_CLICK
+	help
+	  What button 1 does once the passkey pairing is not pending.
+config IM_BUTTON_MODE_CLICK
+	bool "Left mouse button (click and hold)"
+config IM_BUTTON_MODE_SENSITIVITY
+	bool "Cycle cursor sensitivity"
 endchoice
 
 config IM_IMU_SAMPLE_RATE_HZ
@@ -49,20 +57,6 @@ config SAMPLE_BT_DIRECTED_ADVERTISING
 	bool "Directed advertising"
 	default n
 	depends on SAMPLE_BT_HIDS_SECURITY
-
-choice IM_BUTTON_MODE
-	prompt "Button 1 function"
-	default IM_BUTTON_MODE_CLICK
-	help
-	  What button 1 does once the passkey pairing is not pending.
-
-config IM_BUTTON_MODE_CLICK
-	bool "Left mouse button (click and hold)"
-
-config IM_BUTTON_MODE_SENSITIVITY
-	bool "Cycle cursor sensitivity"
-
-endchoice
 
 endmenu
 

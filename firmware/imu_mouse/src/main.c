@@ -9,7 +9,7 @@
 #include "threads.h"
 #include "hids_mouse.h"
 #include "app.h"
-#include "imu_ble.h"
+#include "ble_gatt.h"
 
 int main(void)
 {
@@ -31,7 +31,7 @@ int main(void)
 			if(im_usb_init())
 			{
 				im_log_thread_start();
-				if(im_imu_init(true, true))
+				if(im_imu_init())
 				{
 					im_imu_set_sample_cb(im_app_on_sample);
 					// Change the state before the IMU thread starts, so it can set FAIL afterwards
@@ -47,13 +47,16 @@ int main(void)
 
 		case IM_APP_STATE_INIT_3:
 #if defined(CONFIG_IM_BLE_DEVICE_MOUSE)
-			if (im_hids_mouse_init() && im_hids_mouse_start() && im_gpio_button_init(im_app_on_button))
-#else
-			if (imu_ble_init() && imu_ble_start() && im_gpio_button_init(im_app_on_button))
+			if (im_hids_mouse_init() && im_hids_mouse_start())
+#elif defined(CONFIG_IM_BLE_DEVICE_GATT)
+			if (im_ble_gatt_init() && im_ble_gatt_start())
 #endif
 			{
-				im_state_set(IM_APP_STATE_CALIBRATING);
-				break;
+				if(im_gpio_button_init(im_app_on_button))
+				{
+					im_state_set(IM_APP_STATE_CALIBRATING);
+					break;
+				}
 			}
 			im_state_set(IM_APP_STATE_FAIL);
 			break;
