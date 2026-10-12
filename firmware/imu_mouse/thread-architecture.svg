@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="1280" viewBox="0 0 1700 1280" role="img" aria-labelledby="title description">
+  <title id="title">IMU mouse application thread and synchronization map</title>
+  <desc id="description">The active GATT build's application threads, priorities, semaphores, spinlock, atomics, system workqueue handoffs, and conditional mouse-mode message queues.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#536879"/>
+    </marker>
+    <style>
+      text { font-family: "Segoe UI", Arial, sans-serif; fill: #182f3d; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #536879; }
+      .section { font-size: 17px; font-weight: 700; letter-spacing: 1px; }
+      .node-title { font-size: 16px; font-weight: 700; }
+      .body { font-size: 13px; fill: #344b5a; }
+      .small { font-size: 12px; fill: #536879; }
+      .mono { font-family: Consolas, "Courier New", monospace; font-size: 12px; fill: #1d4655; }
+      .thread { fill: #e9f2f3; stroke: #39818b; stroke-width: 1.7; }
+      .sync { fill: #f2efdf; stroke: #a68b43; stroke-width: 1.7; }
+      .io { fill: #edf1f4; stroke: #8293a1; stroke-width: 1.7; }
+      .work { fill: #f6e9e0; stroke: #bd7550; stroke-width: 1.7; }
+      .conditional { fill: #f5f0f7; stroke: #92739b; stroke-width: 1.7; stroke-dasharray: 7 5; }
+      .panel { stroke-width: 1.4; }
+      .arrow { fill: none; stroke: #536879; stroke-width: 2; marker-end: url(#arrow); }
+      .arrow-dash { fill: none; stroke: #92739b; stroke-width: 2; stroke-dasharray: 7 5; marker-end: url(#arrow); }
+      .label { font-size: 11px; fill: #536879; }
+      .priority { font-size: 14px; font-weight: 700; fill: #155966; }
+    </style>
+  </defs>
+
+  <rect width="1700" height="1280" fill="#f7f8f5"/>
+  <text x="64" y="58" class="title">Application threads, synchronization, and queues</text>
+  <text x="64" y="88" class="subtitle">Based on the active build configuration: CONFIG_IM_BLE_DEVICE_GATT=y</text>
+
+  <rect x="64" y="112" width="1572" height="42" rx="8" fill="#e9eef0"/>
+  <text x="84" y="138" class="small">Priority guide:</text>
+  <text x="184" y="138" class="small">negative = cooperative (runs until it blocks/yields; can preempt preemptive threads)</text>
+  <text x="833" y="138" class="small">preemptive: lower number = higher priority</text>
+  <text x="1243" y="138" class="small">stacks shown in bytes</text>
+
+  <text x="64" y="187" class="section" fill="#286a72">APPLICATION THREADS</text>
+  <rect x="64" y="205" width="290" height="146" rx="10" class="thread"/>
+  <text x="84" y="233" class="node-title">main</text>
+  <text x="84" y="258" class="priority">priority 0 · preemptive</text>
+  <text x="84" y="283" class="body">Implicit Zephyr main thread</text>
+  <text x="84" y="306" class="body">Starts gpio, log, and imu</text>
+  <text x="84" y="329" class="small">Polls app state; sleeps 500 ms while running</text>
+
+  <rect x="374" y="205" width="290" height="146" rx="10" class="thread"/>
+  <text x="394" y="233" class="node-title">imu</text>
+  <text x="394" y="258" class="priority">priority -16 · cooperative</text>
+  <text x="394" y="283" class="body">Stack 2048 · K_FP_REGS</text>
+  <text x="394" y="306" class="body">Waits on s_imu_data_ready</text>
+  <text x="394" y="329" class="small">Collects sample; calls app callback</text>
+
+  <rect x="684" y="205" width="290" height="146" rx="10" class="thread"/>
+  <text x="704" y="233" class="node-title">s_imu_ble_sender</text>
+  <text x="704" y="258" class="priority">priority 5 · preemptive</text>
+  <text x="704" y="283" class="body">Stack 1024 · static thread</text>
+  <text x="704" y="306" class="body">Waits on s_frame_ready</text>
+  <text x="704" y="329" class="small">Sends GATT notification; GATT build only</text>
+
+  <rect x="994" y="205" width="290" height="146" rx="10" class="thread"/>
+  <text x="1014" y="233" class="node-title">gpio</text>
+  <text x="1014" y="258" class="priority">priority 14 · preemptive</text>
+  <text x="1014" y="283" class="body">Stack 512</text>
+  <text x="1014" y="306" class="body">Polls atomic app state every 100 ms</text>
+  <text x="1014" y="329" class="small">Updates status LEDs</text>
+
+  <rect x="1304" y="205" width="332" height="146" rx="10" class="thread"/>
+  <text x="1324" y="233" class="node-title">log</text>
+  <text x="1324" y="258" class="priority">priority 14 · preemptive</text>
+  <text x="1324" y="283" class="body">Stack 1024</text>
+  <text x="1324" y="306" class="body">Calls log_process()</text>
+  <text x="1324" y="329" class="small">Sleeps 250 ms when there is no log work</text>
+
+  <text x="64" y="395" class="section" fill="#286a72">ACTIVE GATT SAMPLE-TO-NOTIFICATION PATH</text>
+  <rect x="64" y="415" width="224" height="136" rx="10" class="io"/>
+  <text x="82" y="444" class="node-title">IMU data-ready ISR</text>
+  <text x="82" y="472" class="body">Increments atomic counter</text>
+  <text x="82" y="497" class="body">Gives data-ready semaphore</text>
+  <text x="82" y="527" class="small">Short interrupt handoff</text>
+
+  <path d="M288 483 H318" class="arrow"/>
+  <rect x="324" y="415" width="224" height="136" rx="10" class="sync"/>
+  <text x="342" y="444" class="node-title">s_imu_data_ready</text>
+  <text x="342" y="472" class="body">Binary semaphore</text>
+  <text x="342" y="497" class="mono">count 0..1</text>
+  <text x="342" y="527" class="small">Coalesces pending edges</text>
+
+  <path d="M548 483 H578" class="arrow"/>
+  <rect x="584" y="415" width="224" height="136" rx="10" class="thread"/>
+  <text x="602" y="444" class="node-title">imu thread</text>
+  <text x="602" y="472" class="body">Takes semaphore, 50 ms timeout</text>
+  <text x="602" y="497" class="body">Reads sensor and calls callback</text>
+  <text x="602" y="527" class="small">Fusion runs in this thread</text>
+
+  <path d="M808 483 H838" class="arrow"/>
+  <rect x="844" y="415" width="224" height="136" rx="10" class="io"/>
+  <text x="862" y="444" class="node-title">im_app_on_sample()</text>
+  <text x="862" y="472" class="body">im_fusion_update()</text>
+  <text x="862" y="497" class="body">Encodes pose; calls imu_ble_push_pose()</text>
+  <text x="862" y="527" class="small">Same call stack as imu thread</text>
+
+  <path d="M1068 483 H1098" class="arrow"/>
+  <rect x="1104" y="415" width="224" height="136" rx="10" class="sync"/>
+  <text x="1122" y="444" class="node-title">Latest-frame handoff</text>
+  <text x="1122" y="472" class="body">One pending frame slot</text>
+  <text x="1122" y="497" class="body">Spinlock guards frame + flag</text>
+  <text x="1122" y="527" class="small">New pose overwrites older pending pose</text>
+
+  <path d="M1328 483 H1358" class="arrow"/>
+  <rect x="1364" y="415" width="272" height="136" rx="10" class="sync"/>
+  <text x="1382" y="444" class="node-title">s_frame_ready</text>
+  <text x="1382" y="472" class="body">Binary semaphore wakes sender</text>
+  <text x="1382" y="497" class="small">Sender takes lock, copies latest frame,</text>
+  <text x="1382" y="519" class="small">then calls bt_gatt_notify()</text>
+
+  <path d="M1500 415 V378 H829 V351" class="arrow"/>
+  <text x="1070" y="372" class="label">wakes s_imu_ble_sender</text>
+
+  <text x="64" y="603" class="section" fill="#9a603c">OTHER SYNCHRONIZATION AND DEFERRED WORK</text>
+  <rect x="64" y="623" width="490" height="132" rx="10" class="work"/>
+  <text x="84" y="652" class="node-title">Button interrupt and debounce</text>
+  <text x="84" y="680" class="body">GPIO ISR reschedules 30 ms delayable work</text>
+  <text x="84" y="705" class="body">Handler runs on Zephyr system workqueue</text>
+  <text x="84" y="732" class="small">Workqueue priority -1; callback runs after debounce</text>
+
+  <path d="M554 689 H584" class="arrow"/>
+  <rect x="590" y="623" width="340" height="132" rx="10" class="io"/>
+  <text x="610" y="652" class="node-title">Button callback</text>
+  <text x="610" y="680" class="body">GATT mode: pressed value is ignored</text>
+  <text x="610" y="705" class="body">Mouse mode: pairing / click / sensitivity</text>
+  <text x="610" y="732" class="small">Runs in system workqueue context</text>
+
+  <rect x="970" y="623" width="320" height="132" rx="10" class="sync"/>
+  <text x="990" y="652" class="node-title">s_state</text>
+  <text x="990" y="680" class="body">Atomic app-state value</text>
+  <text x="990" y="705" class="body">Written by main and imu on faults</text>
+  <text x="990" y="732" class="small">Read by main and gpio threads</text>
+
+  <path d="M1290 689 H1320" class="arrow"/>
+  <rect x="1326" y="623" width="310" height="132" rx="10" class="io"/>
+  <text x="1346" y="652" class="node-title">GPIO LED updates</text>
+  <text x="1346" y="680" class="body">gpio polls state every 100 ms</text>
+  <text x="1346" y="705" class="body">and sets/toggles LEDs</text>
+  <text x="1346" y="732" class="small">No message queue for state changes</text>
+
+  <text x="64" y="807" class="section" fill="#72567c">CONDITIONAL HID MOUSE MODE · NOT IN THE ACTIVE GATT BUILD</text>
+  <rect x="64" y="827" width="480" height="150" rx="10" class="conditional"/>
+  <text x="84" y="857" class="node-title">hids_queue</text>
+  <text x="84" y="885" class="body">k_msgq capacity 10 · stores mouse movement</text>
+  <text x="84" y="910" class="body">Producers enqueue movement; hids_work drains it</text>
+  <text x="84" y="940" class="small">No dedicated HID sender thread</text>
+
+  <path d="M544 902 H574" class="arrow-dash"/>
+  <rect x="580" y="827" width="480" height="150" rx="10" class="conditional"/>
+  <text x="600" y="857" class="node-title">HID work on system workqueue</text>
+  <text x="600" y="885" class="body">Sends mouse reports; completion resubmits work</text>
+  <text x="600" y="910" class="body">Button report retry uses delayable work (10 ms)</text>
+  <text x="600" y="940" class="small">Movement in-flight count is atomic; max 2</text>
+
+  <rect x="1096" y="827" width="540" height="150" rx="10" class="conditional"/>
+  <text x="1116" y="857" class="node-title">Pairing queues (HID/security options)</text>
+  <text x="1116" y="885" class="body">mitm_queue: capacity CONFIG_BT_HIDS_MAX_CLIENT_COUNT</text>
+  <text x="1116" y="910" class="body">bonds_queue: conditional on directed advertising;</text>
+  <text x="1116" y="935" class="body">capacity CONFIG_BT_MAX_PAIRED</text>
+  <text x="1116" y="960" class="small">These k_msgq objects exist only in the mouse source path.</text>
+
+  <rect x="64" y="1010" width="1572" height="98" rx="10" fill="#e9eef0" class="panel" stroke="#d2dce0"/>
+  <text x="86" y="1042" class="node-title">What is shared?</text>
+  <text x="86" y="1070" class="body">App state: atomic. IMU readiness and BLE frame wakeup: binary semaphores. BLE pending frame: spinlock-protected single slot. HID movement/pairing: k_msgq in mouse mode.</text>
+  <text x="86" y="1092" class="small">No application mutex is defined in the inspected modules. BLE protocol internals and Zephyr kernel threads are outside this application-thread map.</text>
+
+  <text x="64" y="1152" class="small">Source basis: threads.h, main.c, imu.c, imu_ble.c, gpio.c, state.c, log.c, and conditional hids_mouse.c.</text>
+</svg>

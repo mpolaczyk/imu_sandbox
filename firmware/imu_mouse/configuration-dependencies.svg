@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="940" viewBox="0 0 1500 940" role="img" aria-labelledby="title description">
+  <title id="title">Zephyr application configuration dependencies</title>
+  <desc id="description">Diagram showing the devicetree hardware configuration and Kconfig software configuration paths, their generated outputs, and how those outputs feed application compilation.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#526477"/>
+    </marker>
+    <style>
+      text { font-family: "Segoe UI", Arial, sans-serif; fill: #172a3a; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #526477; }
+      .lane-title { font-size: 17px; font-weight: 700; letter-spacing: 1px; }
+      .node-title { font-size: 17px; font-weight: 700; }
+      .body { font-size: 14px; fill: #33485a; }
+      .small { font-size: 12px; fill: #526477; }
+      .mono { font-family: Consolas, "Courier New", monospace; font-size: 13px; fill: #173b4c; }
+      .hardware { fill: #eaf4f2; stroke: #36877e; }
+      .hardware-strong { fill: #d7ebe7; stroke: #36877e; }
+      .software { fill: #f4f1e7; stroke: #aa873c; }
+      .software-strong { fill: #eee5ca; stroke: #aa873c; }
+      .consumer { fill: #f3f5f7; stroke: #8293a2; }
+      .build { fill: #183e4b; stroke: #183e4b; }
+      .build-text { fill: #ffffff; }
+      .arrow { fill: none; stroke: #526477; stroke-width: 2.2; marker-end: url(#arrow); }
+      .lane { rx: 12; stroke-width: 1.5; }
+      .node { rx: 9; stroke-width: 1.7; }
+    </style>
+  </defs>
+
+  <rect width="1500" height="940" fill="#f7f8f5"/>
+  <path d="M0 112 H1500" stroke="#d9e0e3" stroke-width="1"/>
+  <text x="64" y="60" class="title">How Zephyr configuration feeds the application</text>
+  <text x="64" y="88" class="subtitle">Hardware description and software feature selection are resolved separately, then used together to build the firmware.</text>
+
+  <rect x="52" y="142" width="1396" height="326" rx="14" fill="#eff6f4" stroke="#d4e5e1" class="lane"/>
+  <text x="76" y="177" class="lane-title" fill="#286e67">HARDWARE PATH · DEVICETREE</text>
+
+  <rect x="78" y="211" width="280" height="190" class="hardware node"/>
+  <text x="100" y="242" class="node-title">Inputs</text>
+  <text x="100" y="276" class="body">Board target</text>
+  <text x="100" y="298" class="small">Selects the board and its base hardware description</text>
+  <path d="M100 319 H336" stroke="#c7dcd7"/>
+  <text x="100" y="347" class="mono">app.overlay</text>
+  <text x="100" y="371" class="small">Adds or adjusts board-specific hardware</text>
+
+  <path d="M358 306 H414" class="arrow"/>
+  <rect x="420" y="235" width="280" height="142" class="hardware-strong node"/>
+  <text x="442" y="269" class="node-title">Devicetree merge</text>
+  <text x="442" y="302" class="body">Board DTS + overlay</text>
+  <text x="442" y="330" class="small">Describes devices, wiring, and</text>
+  <text x="442" y="350" class="small">boot-time hardware settings</text>
+
+  <path d="M700 306 H756" class="arrow"/>
+  <rect x="762" y="235" width="280" height="142" class="hardware-strong node"/>
+  <text x="784" y="269" class="node-title">Generated devicetree</text>
+  <text x="784" y="304" class="mono">zephyr.dts</text>
+  <text x="784" y="329" class="mono">devicetree macros</text>
+  <text x="784" y="353" class="small">Available to drivers and application code</text>
+
+  <path d="M1042 306 H1098" class="arrow"/>
+  <rect x="1104" y="211" width="318" height="190" class="consumer node"/>
+  <text x="1126" y="242" class="node-title">Hardware consumers</text>
+  <text x="1126" y="278" class="mono">gpio.c</text>
+  <text x="1200" y="278" class="body">uses the <tspan class="mono">button0</tspan> GPIO</text>
+  <text x="1126" y="312" class="mono">imu.c</text>
+  <text x="1200" y="312" class="body">uses the sensor device</text>
+  <text x="1126" y="356" class="small">The overlay describes hardware; it does not</text>
+  <text x="1126" y="376" class="small">select the BLE application mode.</text>
+
+  <rect x="52" y="492" width="1396" height="326" rx="14" fill="#f7f3e9" stroke="#e8dfc7" class="lane"/>
+  <text x="76" y="527" class="lane-title" fill="#896b2b">SOFTWARE PATH · KCONFIG</text>
+
+  <rect x="78" y="561" width="280" height="190" class="software node"/>
+  <text x="100" y="592" class="node-title">Inputs</text>
+  <text x="100" y="626" class="body">Board defaults</text>
+  <text x="100" y="658" class="mono">Kconfig</text>
+  <text x="100" y="690" class="mono">prj.conf</text>
+  <text x="100" y="726" class="small">Declares options, then chooses values</text>
+
+  <path d="M358 656 H414" class="arrow"/>
+  <rect x="420" y="585" width="280" height="142" class="software-strong node"/>
+  <text x="442" y="619" class="node-title">Kconfig resolution</text>
+  <text x="442" y="653" class="body">Merges defaults and settings</text>
+  <text x="442" y="681" class="small">Resolves the BLE device choice</text>
+  <text x="442" y="705" class="mono">IMU or mouse</text>
+
+  <path d="M700 656 H756" class="arrow"/>
+  <rect x="762" y="585" width="280" height="142" class="software-strong node"/>
+  <text x="784" y="619" class="node-title">Generated config</text>
+  <text x="784" y="654" class="mono">.config</text>
+  <text x="784" y="680" class="mono">autoconf.h</text>
+  <text x="784" y="706" class="small">Exposes selected <tspan class="mono">CONFIG_*</tspan> values</text>
+
+  <path d="M1042 656 H1098" class="arrow"/>
+  <rect x="1104" y="561" width="318" height="190" class="consumer node"/>
+  <text x="1126" y="592" class="node-title">Application selection</text>
+  <text x="1126" y="628" class="mono">CMakeLists.txt</text>
+  <text x="1126" y="652" class="small">Includes <tspan class="mono">imu_ble.c</tspan> or <tspan class="mono">hids_mouse.c</tspan></text>
+  <text x="1126" y="687" class="mono">app.c</text>
+  <text x="1181" y="687" class="body">compiles the selected path</text>
+  <text x="1126" y="724" class="small">Kconfig selects software, not GPIO pins.</text>
+
+  <path d="M1263 401 V438 H1440 V840 H1315 V850" class="arrow"/>
+  <path d="M1263 751 V850" class="arrow"/>
+
+  <rect x="1128" y="854" width="374" height="62" rx="12" class="build"/>
+  <text x="1315" y="880" text-anchor="middle" class="node-title build-text">Compile and link firmware</text>
+  <text x="1315" y="901" text-anchor="middle" class="small" fill="#d6e4e8">Both configuration paths contribute to the build</text>
+</svg>

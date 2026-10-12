@@ -21,6 +21,7 @@ static void s_gpio_thread_fn(void *p1, void *p2, void *p3)
 		enum im_app_state state = im_state_get();
 		switch (state)
 		{
+		case IM_APP_STATE_INIT_1:
 		case IM_APP_STATE_INIT_2:
 		case IM_APP_STATE_INIT_3:
 			if (!im_gpio_led_toggle_only(IM_GPIO_LED_GREEN))
@@ -29,8 +30,15 @@ static void s_gpio_thread_fn(void *p1, void *p2, void *p3)
 			}
 			break;
 
-		case IM_APP_STATE_RUNNING:
+		case IM_APP_STATE_CALIBRATING:
 			if (!im_gpio_led_toggle_only(IM_GPIO_LED_BLUE))
+			{
+				im_state_set(IM_APP_STATE_FAIL);
+			}
+			break;
+
+		case IM_APP_STATE_RUNNING:
+			if (!im_gpio_led_set_only(IM_GPIO_LED_BLUE))
 			{
 				im_state_set(IM_APP_STATE_FAIL);
 			}
@@ -60,7 +68,7 @@ static const struct gpio_dt_spec s_button = GPIO_DT_SPEC_GET(DT_NODELABEL(button
 static struct gpio_callback s_button_gpio_cb;
 static struct k_work_delayable s_button_work;
 static im_gpio_button_cb_t s_button_cb;
-static bool s_button_down;
+static atomic_t s_button_down;
 
 static void s_button_isr(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
@@ -74,11 +82,12 @@ static void s_button_work_fn(struct k_work *work)
 {
 	ARG_UNUSED(work);
 	const bool down = gpio_pin_get_dt(&s_button) > 0;
-	if (down != s_button_down && s_button_cb)
+	const bool was_down = atomic_get(&s_button_down) != 0;
+	if (down != was_down && s_button_cb)
 	{
 		s_button_cb(down);
 	}
-	s_button_down = down;
+	atomic_set(&s_button_down, down);
 }
 
 // External linkage
@@ -111,6 +120,11 @@ bool im_gpio_init()
 	return true;
 }
 
+bool im_gpio_button_is_pressed(void)
+{
+	return atomic_get(&s_button_down) != 0;
+}
+
 bool im_gpio_button_init(im_gpio_button_cb_t cb)
 {
 	if (!gpio_is_ready_dt(&s_button))
@@ -118,6 +132,7 @@ bool im_gpio_button_init(im_gpio_button_cb_t cb)
 		printk("Error: Button GPIO is not ready\n");
 		return false;
 	}
+
 	if (gpio_pin_configure_dt(&s_button, GPIO_INPUT) < 0)
 	{
 		printk("Error: Button GPIO configuration failed\n");

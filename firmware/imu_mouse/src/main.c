@@ -9,6 +9,7 @@
 #include "threads.h"
 #include "hids_mouse.h"
 #include "app.h"
+#include "ble_gatt.h"
 
 int main(void)
 {
@@ -17,7 +18,7 @@ int main(void)
 		switch (im_state_get())
 		{
 		case IM_APP_STATE_INIT_1:
-			if(im_gpio_init())
+			if (im_gpio_init())
 			{
 				im_gpio_thread_start();
 				im_state_set(IM_APP_STATE_INIT_2);
@@ -30,7 +31,7 @@ int main(void)
 			if(im_usb_init())
 			{
 				im_log_thread_start();
-				if(im_imu_init(true, true))
+				if(im_imu_init())
 				{
 					im_imu_set_sample_cb(im_app_on_sample);
 					// Change the state before the IMU thread starts, so it can set FAIL afterwards
@@ -45,14 +46,22 @@ int main(void)
 			break;
 
 		case IM_APP_STATE_INIT_3:
-			if(im_hids_mouse_init() && im_hids_mouse_start() && im_gpio_button_init(im_app_on_button))
+#if defined(CONFIG_IM_BLE_DEVICE_MOUSE)
+			if (im_hids_mouse_init() && im_hids_mouse_start())
+#elif defined(CONFIG_IM_BLE_DEVICE_GATT)
+			if (im_ble_gatt_init() && im_ble_gatt_start())
+#endif
 			{
-				im_state_set(IM_APP_STATE_RUNNING);
-				break;
+				if(im_gpio_button_init(im_app_on_button))
+				{
+					im_state_set(IM_APP_STATE_CALIBRATING);
+					break;
+				}
 			}
 			im_state_set(IM_APP_STATE_FAIL);
 			break;
 
+		case IM_APP_STATE_CALIBRATING:
 		case IM_APP_STATE_RUNNING:
 			k_sleep(K_MSEC(IM_MAIN_THREAD_PERIOD_MS));
 			break;
@@ -62,3 +71,10 @@ int main(void)
 		}
 	}
 }
+
+// Bluetooth issues in Chrome
+// chrome://flags/
+// Use the new permissions backend for Web Bluetooth: Enabled -> Relaunch
+// chrome://settings/content/bluetoothDevices -> Sites can ask...
+// https://googlechrome.github.io/samples/web-bluetooth/device-info.html?allDevices=true
+// To check if Chrome detects devices

@@ -4,3 +4,5 @@
 
 firmware/imu_mouse/.venv/
 firmware/imu_mouse/build_debug/
+simulator/node_modules/
+simulator/dist/

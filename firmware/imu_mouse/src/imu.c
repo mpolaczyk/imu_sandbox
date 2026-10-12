@@ -3,33 +3,74 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/drivers/i2c.h>
+#include <zephyr/drivers/gpio.h>
 
 #include "imu.h"
 #include "state.h"
 #include "threads.h"
 
-#define PRINT_MEASUREMENT false
-
 #define IMU_REG_WHO_AM_I 0x0F
-#define IMU_READY_TIMEOUT_MS 2000
-#define IMU_READY_POLL_MS 5
 
 // Internal linkage
 
+// Thread and synchronisation
 static K_THREAD_STACK_DEFINE(s_imu_thread_stack, IM_IMU_THREAD_STACK_SIZE);
 static struct k_thread s_imu_thread_data;
 static K_SEM_DEFINE(s_imu_data_ready, 0, 1);
 
+// Measurement statistics
+#define IMU_PRINT_SAMPLE 0
+#define IMU_PRINT_PERIODIC_STATS 1
+#define IMU_STATS_PERIOD_MS 1000
+#define IMU_READY_TIMEOUT_MS 2000
+#define IMU_READY_POLL_MS 5
+#define IMU_WATCHDOG_MS 50
+static int64_t s_next_report_ms;
+static atomic_t s_data_ready_count; 	// Data-ready interrupts, incremented by the ISR
+static atomic_t s_sample_count; 		// Successfully collected samples
+static atomic_t s_not_acquired_count; 	// Semaphore timeouts, when samples don't arrive
+
+// Measurement data
 static struct sensor_value s_accel[3];
 static struct sensor_value s_gyro[3];
-static const struct device* const s_imu = DEVICE_DT_GET_ONE(st_lsm6dsl);
 static im_imu_sample_cb_t s_sample_cb;
 
+// Hardware
+static const struct device* const s_imu = DEVICE_DT_GET_ONE(st_lsm6dsl);
+static const struct i2c_dt_spec s_i2c_bus = I2C_DT_SPEC_GET(DT_NODELABEL(lsm6ds3tr_c));
+
+// IMU data-ready interrupt
 static void s_imu_data_ready_handler(const struct device *dev, const struct sensor_trigger *trig)
 {
 	ARG_UNUSED(dev);
 	ARG_UNUSED(trig);
+	atomic_inc(&s_data_ready_count);
 	k_sem_give(&s_imu_data_ready);
+}
+
+bool s_imu_collect()
+{
+	// I2C moves data to driver memory, clears the interrupt
+	if (sensor_sample_fetch(s_imu) < 0)
+	{
+		printk("Error: IMU Sensor sample update error\n");
+		return false;
+	}
+	sensor_channel_get(s_imu, SENSOR_CHAN_ACCEL_XYZ, s_accel);
+	sensor_channel_get(s_imu, SENSOR_CHAN_GYRO_XYZ, s_gyro);
+	// Notify callback
+	if (s_sample_cb)
+	{
+		s_sample_cb(sensor_value_to_float(&s_gyro[0]), sensor_value_to_float(&s_gyro[1]), sensor_value_to_float(&s_gyro[2]), sensor_value_to_float(&s_accel[0]), sensor_value_to_float(&s_accel[1]), sensor_value_to_float(&s_accel[2]));
+	}
+#if IMU_PRINT_SAMPLE
+	char out_str[64];
+	sprintf(out_str, "accel x:%f ms/2 y:%f ms/2 z:%f ms/2", sensor_value_to_float(&s_accel[0]), sensor_value_to_float(&s_accel[1]), sensor_value_to_float(&s_accel[2]));
+	printk("%s\n", out_str);
+	sprintf(out_str, "gyro x:%f dps y:%f dps z:%f dps", sensor_value_to_float(&s_gyro[0]), sensor_value_to_float(&s_gyro[1]), sensor_value_to_float(&s_gyro[2]));
+	printk("%s\n", out_str);
+#endif
+	return true;
 }
 
 static void s_imu_thread_fn(void *p1, void *p2, void *p3)
@@ -39,27 +80,47 @@ static void s_imu_thread_fn(void *p1, void *p2, void *p3)
 	ARG_UNUSED(p3);
 	while (1)
 	{
-		k_sem_take(&s_imu_data_ready, K_FOREVER);
-		if (!im_imu_collect(PRINT_MEASUREMENT))
+		const bool acquired = 0 == k_sem_take(&s_imu_data_ready, K_MSEC(IMU_WATCHDOG_MS));
+		if (!acquired)
+		{		
+			// If the semaphore times out, means interrupt was not fired.
+			// The thread attempts a sensor read anyway, to clear the interrupt high state.
+			// This can recover a sample and may clear a latched data-ready condition if an interrupt edge was unobserved.
+			atomic_inc(&s_not_acquired_count);
+		}
+		// Measurement
+		if (!s_imu_collect())
 		{
 			im_state_set(IM_APP_STATE_FAIL);
 			return;
 		}
+		// Statistics reporting
+#if IMU_PRINT_PERIODIC_STATS
+		atomic_inc(&s_sample_count);
+		const int64_t now_ms = k_uptime_get();
+		if (now_ms >= s_next_report_ms)
+		{
+			printk("IMU: data_ready_count=%d sample_count=%d not_acquired=%d\n", 
+				(int)atomic_set(&s_data_ready_count, 0), 
+				(int)atomic_set(&s_sample_count, 0), 
+				(int)atomic_set(&s_not_acquired_count, 0));
+			s_next_report_ms = now_ms + IMU_STATS_PERIOD_MS;
+		}
+#endif
 	}
 }
 
 static bool s_imu_wait_ready(void)
 {
 	// The driver init fails for good if the chip does not ACK yet, so probe first
-	static const struct i2c_dt_spec bus = I2C_DT_SPEC_GET(DT_NODELABEL(lsm6ds3tr_c));
 	uint8_t who_am_i;
-	if (!i2c_is_ready_dt(&bus))
+	if (!i2c_is_ready_dt(&s_i2c_bus))
 	{
 		printk("Error: IMU I2C bus is not ready\n");
 		return false;
 	}
 	const int64_t start = k_uptime_get();
-	while (i2c_reg_read_byte_dt(&bus, IMU_REG_WHO_AM_I, &who_am_i) < 0)
+	while (i2c_reg_read_byte_dt(&s_i2c_bus, IMU_REG_WHO_AM_I, &who_am_i) < 0)
 	{
 		if (k_uptime_get() - start > IMU_READY_TIMEOUT_MS)
 		{
@@ -100,7 +161,7 @@ bool im_imu_thread_start()
 	return true;
 }
 
-bool im_imu_init(const bool delay_init, const bool configure_sampling)
+bool im_imu_init()
 {
 	struct sensor_value odr_attr;
 	if (!s_imu) 
@@ -108,21 +169,18 @@ bool im_imu_init(const bool delay_init, const bool configure_sampling)
         printk("Error: IMU device pointer not found\n");
         return false;
     }
-	if(delay_init)
+	// Delayed init - normal (OS) init does not work (I2C powerline not ready)
+	if (!s_imu_wait_ready())
 	{
-		// Delayed init is implemented because normal init does not work (timing)
-		if (!s_imu_wait_ready())
-		{
-			return false;
-		}
-		printk("IMU Manual delayed initialization\n");
-    	const int err = device_init(s_imu);
-    	if (err)
-		{
-        	printk("Error: IMU initialization failed, error code: %d\n", err);
-       		return false;
-    	}
+		return false;
 	}
+	printk("IMU Manual delayed initialization\n");
+    const int err = device_init(s_imu);
+    if (err)
+	{
+      	printk("Error: I2C initialization failed, error code: %d\n", err);
+    	return false;
+    }
 	if(!device_is_ready(s_imu)) 
 	{
 		const uint8_t state = s_imu->state->init_res;
@@ -130,48 +188,19 @@ bool im_imu_init(const bool delay_init, const bool configure_sampling)
 		printk("Error: IMU not ready, init_res=%d init=%d\n", state, initialized);
 		return false;
 	}
-	if(configure_sampling)
+	printk("IMU configuring sampling\n");
+	odr_attr.val1 = CONFIG_IM_IMU_SAMPLE_RATE_HZ;
+	odr_attr.val2 = 0;
+	if (sensor_attr_set(s_imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) 
 	{
-		printk("IMU configuring sampling\n");
-		odr_attr.val1 = IM_IMU_SAMPLE_RATE_HZ;
-		odr_attr.val2 = 0;
-		if (sensor_attr_set(s_imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) 
-		{
-			printk("Error: IMU Cannot set sampling frequency for accelerometer.\n");
-			return false;
-		}
-		if (sensor_attr_set(s_imu, SENSOR_CHAN_GYRO_XYZ, SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) 
-		{
-			printk("Error: IMU Cannot set sampling frequency for gyro.\n");
-			return false;
-		}
-	}
-	printk("IMU Ok\n");
-	return true;
-}
-
-bool im_imu_collect(const bool do_print)
-{
-	if (sensor_sample_fetch(s_imu) < 0) // I2C move to driver memory, clear interrupt
-	{
-		printk("Error: IMU Sensor sample update error\n");
+		printk("Error: IMU Cannot set sampling frequency for accelerometer.\n");
 		return false;
 	}
-
-	sensor_channel_get(s_imu, SENSOR_CHAN_ACCEL_XYZ, s_accel);
-	sensor_channel_get(s_imu, SENSOR_CHAN_GYRO_XYZ, s_gyro);
-
-	if(do_print)
+	if (sensor_attr_set(s_imu, SENSOR_CHAN_GYRO_XYZ, SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) 
 	{
-		char out_str[64];
-		sprintf(out_str, "accel x:%f ms/2 y:%f ms/2 z:%f ms/2", sensor_value_to_float(&s_accel[0]), sensor_value_to_float(&s_accel[1]), sensor_value_to_float(&s_accel[2]));
-		printk("%s\n", out_str);
-		sprintf(out_str, "gyro x:%f dps y:%f dps z:%f dps", sensor_value_to_float(&s_gyro[0]), sensor_value_to_float(&s_gyro[1]), sensor_value_to_float(&s_gyro[2]));
-		printk("%s\n", out_str);
+		printk("Error: IMU Cannot set sampling frequency for gyro.\n");
+		return false;
 	}
-	if (s_sample_cb)
-	{
-		s_sample_cb(sensor_value_to_float(&s_gyro[0]), sensor_value_to_float(&s_gyro[1]), sensor_value_to_float(&s_gyro[2]), sensor_value_to_float(&s_accel[0]), sensor_value_to_float(&s_accel[1]), sensor_value_to_float(&s_accel[2]));
-	}
+	printk("IMU Ok\n");
 	return true;
 }

@@ -4,6 +4,9 @@
 #include "state.h"
 #include "imu.h"
 #include "fusion.h"
+#include "gpio.h"
+
+#if defined(CONFIG_IM_BLE_DEVICE_MOUSE)
 #include "hids_mouse.h"
 
 // Integers on purpose: level 2 (2500) is the default
@@ -19,9 +22,13 @@ static float s_mouse_rem_y;
 
 // A press that confirmed pairing must not produce a click release
 static bool s_press_used_for_pairing;
+#elif defined(CONFIG_IM_BLE_DEVICE_GATT)
+#include "ble_gatt.h"
+#endif
 
 void im_app_on_button(bool pressed)
 {
+#if defined(CONFIG_IM_BLE_DEVICE_MOUSE)
 	if (pressed && im_hids_mouse_pairing_pending())
 	{
 		s_press_used_for_pairing = true;
@@ -40,25 +47,37 @@ void im_app_on_button(bool pressed)
 			s_sens_idx = (s_sens_idx + 1) % ARRAY_SIZE(s_px_per_rad);
 			printk("Sensitivity: %d px/rad\n", s_px_per_rad[s_sens_idx]);
 		}
-		return;
 	}
-	im_hids_mouse_button(pressed);
+	else if(IS_ENABLED(CONFIG_IM_BUTTON_MODE_CLICK))
+	{
+		im_hids_mouse_button(pressed);
+	}
+#elif defined(CONFIG_IM_BLE_DEVICE_GATT)
+	ARG_UNUSED(pressed);
+#endif
 }
 
 void im_app_on_sample(float gx, float gy, float gz, float ax, float ay, float az)
 {
+	enum im_app_state state = im_state_get();
+	if (state != IM_APP_STATE_CALIBRATING && state != IM_APP_STATE_RUNNING)
+	{
+		return;
+	}
+
 	struct im_fusion_rates rates;
-	if (!im_fusion_update(gx, gy, gz, ax, ay, az, &rates))
+	const bool fusion_valid = im_fusion_update(gx, gy, gz, ax, ay, az, &rates);
+	if (!fusion_valid)
 	{
 		return;
 	}
-
-	if (im_state_get() != IM_APP_STATE_RUNNING)
+	if (state == IM_APP_STATE_CALIBRATING)
 	{
-		return;
+		im_state_set(IM_APP_STATE_RUNNING);
 	}
 
-	const float px_per_rad_sample = (float)s_px_per_rad[s_sens_idx] / IM_IMU_SAMPLE_RATE_HZ;
+#if defined(CONFIG_IM_BLE_DEVICE_MOUSE)
+	const float px_per_rad_sample = (float)s_px_per_rad[s_sens_idx] / CONFIG_IM_IMU_SAMPLE_RATE_HZ;
 	const float fx = s_mouse_rem_x + MOUSE_X_SIGN * rates.yaw * px_per_rad_sample;
 	const float fy = s_mouse_rem_y + MOUSE_Y_SIGN * rates.pitch * px_per_rad_sample;
 	const int16_t dx = (int16_t)fx;
@@ -69,4 +88,7 @@ void im_app_on_sample(float gx, float gy, float gz, float ax, float ay, float az
 	{
 		im_hids_mouse_move(dx, dy);
 	}
+#elif defined(CONFIG_IM_BLE_DEVICE_GATT)
+	im_ble_gatt_push_frame(rates.qw, rates.qx, rates.qy, rates.qz, rates.gx, rates.gy, rates.gz);
+#endif
 }
