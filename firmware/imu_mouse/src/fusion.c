@@ -51,6 +51,24 @@ static bool s_q_init;
 static float s_bias[3];
 static uint32_t s_still_count;
 
+void im_fusion_reset(void)
+{
+	s_cal_done = false;
+	s_cal_count = 0;
+	s_cal_sum[0] = 0.0f;
+	s_cal_sum[1] = 0.0f;
+	s_cal_sum[2] = 0.0f;
+	s_q0 = 1.0f;
+	s_q1 = 0.0f;
+	s_q2 = 0.0f;
+	s_q3 = 0.0f;
+	s_q_init = false;
+	s_bias[0] = 0.0f;
+	s_bias[1] = 0.0f;
+	s_bias[2] = 0.0f;
+	s_still_count = 0;
+}
+
 static void s_init_from_accel(float ax, float ay, float az)
 {
 	const float n = sqrtf(ax * ax + ay * ay + az * az);

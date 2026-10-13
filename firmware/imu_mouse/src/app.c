@@ -26,6 +26,25 @@ static bool s_press_used_for_pairing;
 #include "ble_gatt.h"
 #endif
 
+static atomic_t s_streaming_active;
+
+void im_app_on_error(void)
+{
+	im_state_set(IM_APP_STATE_FAIL);
+}
+
+void im_app_on_ble_session(bool ready)
+{
+	const atomic_val_t new_state = ready ? 1 : 0;
+	const atomic_val_t old_state = atomic_set(&s_streaming_active, new_state);
+	if (old_state == new_state)
+	{
+		return;
+	}
+	im_state_set(ready ? IM_APP_STATE_CALIBRATING : IM_APP_STATE_WAITING);
+	im_imu_set_streaming(ready);
+}
+
 void im_app_on_button(bool pressed)
 {
 #if defined(CONFIG_IM_BLE_DEVICE_MOUSE)
@@ -57,7 +76,7 @@ void im_app_on_button(bool pressed)
 #endif
 }
 
-void im_app_on_sample(float gx, float gy, float gz, float ax, float ay, float az)
+void im_app_on_imu_sample(float gx, float gy, float gz, float ax, float ay, float az)
 {
 	enum im_app_state state = im_state_get();
 	if (state != IM_APP_STATE_CALIBRATING && state != IM_APP_STATE_RUNNING)

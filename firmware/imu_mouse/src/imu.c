@@ -5,6 +5,7 @@
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/gpio.h>
 
+#include "fusion.h"
 #include "imu.h"
 #include "state.h"
 #include "threads.h"
@@ -17,6 +18,9 @@
 static K_THREAD_STACK_DEFINE(s_imu_thread_stack, IM_IMU_THREAD_STACK_SIZE);
 static struct k_thread s_imu_thread_data;
 static K_SEM_DEFINE(s_imu_data_ready, 0, 1);
+
+// Streaming state desired state
+static atomic_t s_streaming_requested;
 
 // Measurement statistics
 #define IMU_PRINT_SAMPLE 0
@@ -34,11 +38,27 @@ static atomic_t s_not_acquired_count; 	// Semaphore timeouts, when samples don't
 static struct sensor_value s_accel[3];
 static struct sensor_value s_gyro[3];
 static im_imu_sample_cb_t s_sample_cb;
+static im_imu_error_cb_t s_error_cb;
 
 // Hardware
 static const struct device* const s_imu = DEVICE_DT_GET_ONE(st_lsm6dsl);
 static const struct i2c_dt_spec s_i2c_bus = I2C_DT_SPEC_GET(DT_NODELABEL(lsm6ds3tr_c));
 
+static bool s_imu_set_sampling_frequency(uint16_t frequency_hz)
+{
+	const struct sensor_value odr = { .val1 = frequency_hz, .val2 = 0 };
+	if (sensor_attr_set(s_imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_SAMPLING_FREQUENCY, &odr) < 0)
+	{
+		printk("Error: IMU failed to set accelerometer ODR to %u Hz\n", frequency_hz);
+		return false;
+	}
+	if (sensor_attr_set(s_imu, SENSOR_CHAN_GYRO_XYZ, SENSOR_ATTR_SAMPLING_FREQUENCY, &odr) < 0)
+	{
+		printk("Error: IMU failed to set gyroscope ODR to %u Hz\n", frequency_hz);
+		return false;
+	}
+	return true;
+}
 // IMU data-ready interrupt
 static void s_imu_data_ready_handler(const struct device *dev, const struct sensor_trigger *trig)
 {
@@ -78,20 +98,50 @@ static void s_imu_thread_fn(void *p1, void *p2, void *p3)
 	ARG_UNUSED(p1);
 	ARG_UNUSED(p2);
 	ARG_UNUSED(p3);
+	bool streaming = false;
 	while (1)
 	{
-		const bool acquired = 0 == k_sem_take(&s_imu_data_ready, K_MSEC(IMU_WATCHDOG_MS));
+		if (!streaming)
+		{
+			k_sem_take(&s_imu_data_ready, K_FOREVER);
+			if (!atomic_get(&s_streaming_requested))
+			{
+				continue;
+			}
+
+			// Start streaming after the request wakes the idle thread.
+			k_sem_reset(&s_imu_data_ready);
+			if (!s_imu_set_sampling_frequency(CONFIG_IM_IMU_SAMPLE_RATE_HZ))
+			{
+				if (s_error_cb) s_error_cb();
+				return;
+			}
+			streaming = true;
+			im_fusion_reset();
+			continue;
+		}
+
+		const bool acquired = k_sem_take(&s_imu_data_ready, K_MSEC(IMU_WATCHDOG_MS)) == 0;
+		if (!atomic_get(&s_streaming_requested))
+		{
+			// Stop before collecting another sample.
+			if (!s_imu_set_sampling_frequency(0))
+			{
+				if (s_error_cb) s_error_cb();
+				return;
+			}
+			streaming = false;
+			continue;
+		}
+
 		if (!acquired)
-		{		
-			// If the semaphore times out, means interrupt was not fired.
-			// The thread attempts a sensor read anyway, to clear the interrupt high state.
-			// This can recover a sample and may clear a latched data-ready condition if an interrupt edge was unobserved.
+		{
+			// The watchdog read can recover a sample if the interrupt edge was missed.
 			atomic_inc(&s_not_acquired_count);
 		}
-		// Measurement
 		if (!s_imu_collect())
 		{
-			im_state_set(IM_APP_STATE_FAIL);
+			if (s_error_cb) s_error_cb();
 			return;
 		}
 		// Statistics reporting
@@ -112,7 +162,7 @@ static void s_imu_thread_fn(void *p1, void *p2, void *p3)
 
 static bool s_imu_wait_ready(void)
 {
-	// The driver init fails for good if the chip does not ACK yet, so probe first
+	// The driver init fails, if the chip does not ACK, probe I2C first
 	uint8_t who_am_i;
 	if (!i2c_is_ready_dt(&s_i2c_bus))
 	{
@@ -140,6 +190,31 @@ void im_imu_set_sample_cb(im_imu_sample_cb_t cb)
 	s_sample_cb = cb;
 }
 
+void im_imu_set_error_callback(im_imu_error_cb_t cb)
+{
+	s_error_cb = cb;
+}
+
+void im_imu_set_streaming(bool enabled)
+{
+	// Give the semaphore to cycle the thread
+	// Bool flag will control the IMU device init/deinit
+	if (enabled)
+	{
+		if (atomic_cas(&s_streaming_requested, 0, 1))
+		{
+			k_sem_give(&s_imu_data_ready);
+		}
+	}
+	else
+	{
+		if (atomic_cas(&s_streaming_requested, 1, 0))
+		{
+			k_sem_give(&s_imu_data_ready);
+		}
+	}
+}
+
 bool im_imu_thread_start()
 {
 	static const struct sensor_trigger trig =
@@ -157,13 +232,11 @@ bool im_imu_thread_start()
 				      s_imu_thread_fn, NULL, NULL, NULL,
 				      IM_IMU_THREAD_PRIORITY, IM_IMU_THREAD_OPTIONS, K_NO_WAIT);
 	k_thread_name_set(tid, "imu");
-	k_sem_give(&s_imu_data_ready);
 	return true;
 }
 
 bool im_imu_init()
 {
-	struct sensor_value odr_attr;
 	if (!s_imu) 
 	{
         printk("Error: IMU device pointer not found\n");
@@ -188,17 +261,9 @@ bool im_imu_init()
 		printk("Error: IMU not ready, init_res=%d init=%d\n", state, initialized);
 		return false;
 	}
-	printk("IMU configuring sampling\n");
-	odr_attr.val1 = CONFIG_IM_IMU_SAMPLE_RATE_HZ;
-	odr_attr.val2 = 0;
-	if (sensor_attr_set(s_imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) 
+	printk("IMU stopping sampling until BLE session starts\n");
+	if (!s_imu_set_sampling_frequency(0))
 	{
-		printk("Error: IMU Cannot set sampling frequency for accelerometer.\n");
-		return false;
-	}
-	if (sensor_attr_set(s_imu, SENSOR_CHAN_GYRO_XYZ, SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) 
-	{
-		printk("Error: IMU Cannot set sampling frequency for gyro.\n");
 		return false;
 	}
 	printk("IMU Ok\n");

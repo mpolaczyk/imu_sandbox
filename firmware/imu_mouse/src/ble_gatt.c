@@ -27,6 +27,30 @@ static bool s_pending;
 static struct k_spinlock s_pending_lock;
 static uint8_t s_pending_frame[BLE_POSE_FRAME_SIZE];
 static uint16_t s_frame_sequence;
+static bool s_link_connected;
+static bool s_pose_notifications_enabled;
+static volatile uint16_t s_connection_interval;
+static im_ble_gatt_session_cb_t s_session_callback;
+
+/* Connection intervals are expressed in 1.25 ms units. */
+#define MIN_SEND_INTERVAL_UNITS 6
+#define MAX_SEND_INTERVAL_UNITS 9
+
+static void s_update_streaming(void)
+{
+	const bool fast_enough = s_connection_interval >= MIN_SEND_INTERVAL_UNITS && s_connection_interval <= MAX_SEND_INTERVAL_UNITS;
+	const bool ready = s_link_connected && s_pose_notifications_enabled && fast_enough;
+	if (!ready)
+	{
+		k_spinlock_key_t key = k_spin_lock(&s_pending_lock);
+		s_pending = false;
+		k_spin_unlock(&s_pending_lock, key);
+	}
+	if (s_session_callback)
+	{
+		s_session_callback(ready);
+	}
+}
 
 // Diagnostics, printed once per second
 #define PRINT_PERIODIC_STATS 1
@@ -50,7 +74,9 @@ static void s_pose_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 	// Notifications enabled means that a client subscribed to the service
 	// This is only informational
 	ARG_UNUSED(attr);
-	if (value & BT_GATT_CCC_NOTIFY)
+	s_pose_notifications_enabled = (value & BT_GATT_CCC_NOTIFY) != 0;
+	s_update_streaming();
+	if (s_pose_notifications_enabled)
 	{
 		printk("BLE GATT pose notifications enabled\n");
 	}
@@ -100,19 +126,21 @@ static void s_adv_process(struct k_work *work)
 }
 
 // Connection lifecycle and timing
-// Send only once the fast connection interval is in effect (1 unit = 1.25ms), 0 = no connection
-#define MAX_SEND_INTERVAL_UNITS 12
 // Requested connection interval 7.5-11.25 ms, latency 0, 4s timeout.
-#define FAST_CONN_PARAM BT_LE_CONN_PARAM(6, 9, 0, 400)
-static volatile uint16_t s_connection_interval;
+#define FAST_CONN_PARAM BT_LE_CONN_PARAM(MIN_SEND_INTERVAL_UNITS, MAX_SEND_INTERVAL_UNITS, 0, 400)
 static void s_connected(struct bt_conn *conn, uint8_t err)
 {
 	if (err)
 	{
+		s_link_connected = false;
+		s_pose_notifications_enabled = false;
+		s_update_streaming();
 		printk("Error: BLE GATT connection failed (err 0x%02x)\n", err);
 		k_work_submit(&s_adv_work);
 		return;
 	}
+	s_link_connected = true;
+	s_connection_interval = 0;
 	// Reads the interval when connection starts
 	// Interval is set by the central, peripherial can request different interval later
 	struct bt_conn_info info;
@@ -121,6 +149,7 @@ static void s_connected(struct bt_conn *conn, uint8_t err)
 		s_connection_interval = info.le.interval;
 		printk("BLE GATT connection begin: interval=%u\n", s_connection_interval);
 	}
+	s_update_streaming();
 	const int param_err = bt_conn_le_param_update(conn, FAST_CONN_PARAM);
 	if (param_err)
 	{
@@ -131,7 +160,10 @@ static void s_disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	ARG_UNUSED(conn);
 	ARG_UNUSED(reason);
+	s_link_connected = false;
+	s_pose_notifications_enabled = false;
 	s_connection_interval = 0;
+	s_update_streaming();
 	printk("BLE GATT connection end\n");
 	k_work_submit(&s_adv_work);
 }
@@ -141,6 +173,7 @@ static void s_le_param_updated(struct bt_conn *conn, uint16_t interval, uint16_t
 	ARG_UNUSED(conn);
 	printk("BLE GATT connection params: interval=%u (%u.%02u ms) latency=%u timeout=%u\n", interval, interval * 5 / 4, (interval * 125) % 100, latency, timeout);
 	s_connection_interval = interval;
+	s_update_streaming();
 }
 BT_CONN_CB_DEFINE(s_connection_cb) =
 {
@@ -156,8 +189,7 @@ static void s_ble_gatt_thread_fn(void *p1, void *p2, void *p3)
 	ARG_UNUSED(p3);
 	while (1)
 	{
-		// Run every period even if no data to pront statistics
-		k_sem_take(&s_pending_frame_ready, K_MSEC(STATS_PERIOD_MS));
+		k_sem_take(&s_pending_frame_ready, K_FOREVER);
 
 		// Copy frame from pending buffer
 		uint8_t frame[BLE_POSE_FRAME_SIZE];
@@ -191,7 +223,7 @@ static void s_ble_gatt_thread_fn(void *p1, void *p2, void *p3)
 		}
 #if PRINT_PERIODIC_STATS
 		const int64_t now_ms = k_uptime_get();
-		if (now_ms >= s_stat_next_ms)
+		if (have && now_ms >= s_stat_next_ms)
 		{
 			printk("BLE GATT notify: ok=%u err=%u (last %d) dropped=%u gated=%u max_call=%u us\n", s_stat_ok, s_stat_err, s_stat_last_err, s_stat_dropped, s_stat_gated, s_stat_max_us);
 			s_stat_ok = s_stat_err = s_stat_max_us = s_stat_dropped = s_stat_gated = 0;
@@ -234,6 +266,12 @@ bool im_ble_gatt_init(void)
 	return true;
 }
 
+void im_ble_gatt_set_session_callback(im_ble_gatt_session_cb_t callback)
+{
+	s_session_callback = callback;
+	s_update_streaming();
+}
+
 bool im_ble_gatt_start(void)
 {
 	k_tid_t tid = k_thread_create(&s_ble_gatt_thread_data, s_ble_gatt_thread_stack,
@@ -247,7 +285,7 @@ bool im_ble_gatt_start(void)
 	}
 	k_thread_name_set(tid, "ble_gatt");
 	k_work_submit(&s_adv_work);	// This begins the advertisement
-	printk("IMU BLE started\n");
+	printk("BLE GATT started\n");
 	return true;
 }
 
@@ -255,7 +293,8 @@ bool im_ble_gatt_push_frame(float qw, float qx, float qy, float qz, float gx_rad
 {
 	// Gate poses to honor the agreed interval
 	const uint16_t interval = s_connection_interval;
-	if (interval == 0 || interval > MAX_SEND_INTERVAL_UNITS)
+	if (!s_link_connected || !s_pose_notifications_enabled || interval == 0 ||
+	    interval > MAX_SEND_INTERVAL_UNITS)
 	{
 		s_stat_gated++;
 		return false;

@@ -4,8 +4,11 @@
 
 #include <zephyr/types.h>
 
+typedef void (*im_hids_mouse_connection_cb_t)(bool connected);
+
 bool im_hids_mouse_init(void);
 bool im_hids_mouse_start(void);
+void im_hids_mouse_set_connection_callback(im_hids_mouse_connection_cb_t callback);
 
 /* True while a pairing passkey awaits confirmation. */
 bool im_hids_mouse_pairing_pending(void);

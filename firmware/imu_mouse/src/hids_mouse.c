@@ -77,12 +77,12 @@
 #define HIDS_QUEUE_SIZE 10
 
 /* HIDS instance. */
-BT_HIDS_DEF(hids_obj, INPUT_REP_BUTTONS_LEN, INPUT_REP_MOVEMENT_LEN, INPUT_REP_MEDIA_PLAYER_LEN);
+BT_HIDS_DEF(s_hids_obj, INPUT_REP_BUTTONS_LEN, INPUT_REP_MOVEMENT_LEN, INPUT_REP_MEDIA_PLAYER_LEN);
 
-static struct k_work hids_work;
+static struct k_work s_hids_work;
 
 /* Movement notifications awaiting completion. */
-static atomic_t movement_in_flight = ATOMIC_INIT(0);
+static atomic_t s_movement_in_flight = ATOMIC_INIT(0);
 
 /* Allows a report to be queued for the next connection event while the previous one is sent. */
 #define MOVEMENT_MAX_IN_FLIGHT 2
@@ -97,46 +97,88 @@ struct mouse_pos
 };
 
 /* Mouse movement queue. */
-K_MSGQ_DEFINE(hids_queue, sizeof(struct mouse_pos), HIDS_QUEUE_SIZE, 4);
+K_MSGQ_DEFINE(s_hids_queue, sizeof(struct mouse_pos), HIDS_QUEUE_SIZE, 4);
 
 #if CONFIG_SAMPLE_BT_DIRECTED_ADVERTISING
 /* Bonded address queue. */
-K_MSGQ_DEFINE(bonds_queue, sizeof(bt_addr_le_t), CONFIG_BT_MAX_PAIRED, 4);
+K_MSGQ_DEFINE(s_bonds_queue, sizeof(bt_addr_le_t), CONFIG_BT_MAX_PAIRED, 4);
 #endif /* CONFIG_SAMPLE_BT_DIRECTED_ADVERTISING */
 
-static const struct bt_data ad[] = 
+static const struct bt_data s_ad[] = 
 {
 	BT_DATA_BYTES(BT_DATA_GAP_APPEARANCE, (CONFIG_BT_DEVICE_APPEARANCE >> 0) & 0xff, (CONFIG_BT_DEVICE_APPEARANCE >> 8) & 0xff),
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_HIDS_VAL), BT_UUID_16_ENCODE(BT_UUID_BAS_VAL)),
 };
 
-static const struct bt_data sd[] = 
+static const struct bt_data s_sd[] = 
 {
 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
 };
 
 /* Single connected host. */
-static struct bt_conn *s_conn;
+static struct bt_conn* s_conn;
+static im_hids_mouse_connection_cb_t s_connection_callback;
 static bool s_in_boot_mode;
 
 /* Wanted and last-delivered button state (bit 0 = left). */
 static uint8_t s_buttons;
 static uint8_t s_buttons_sent;
+static bool s_buttons_notifications_enabled;
+static bool s_movement_notifications_enabled;
+static bool s_boot_mouse_notifications_enabled;
 
-static void button_retry_fn(struct k_work *work)
+static void s_connection_readiness_update(void)
 {
-	ARG_UNUSED(work);
-	k_work_submit(&hids_work);
+	const bool ready = s_conn && (s_in_boot_mode ? s_boot_mouse_notifications_enabled : s_movement_notifications_enabled);
+	if (s_connection_callback)
+	{
+		s_connection_callback(ready);
+	}
 }
 
-static K_WORK_DELAYABLE_DEFINE(button_retry_work, button_retry_fn);
+static void s_input_report_notifications_changed(uint8_t report_id, enum bt_hids_notify_evt evt)
+{
+	const bool enabled = evt == BT_HIDS_CCCD_EVT_NOTIFY_ENABLED;
 
-static bool is_adv_running;
+	if (report_id == INPUT_REP_REF_BUTTONS_ID)
+	{
+		s_buttons_notifications_enabled = enabled;
+		if (enabled)
+		{
+			k_work_submit(&s_hids_work);
+		}
+	}
+	else if (report_id == INPUT_REP_REF_MOVEMENT_ID)
+	{
+		s_movement_notifications_enabled = enabled;
+		s_connection_readiness_update();
+	}
+}
 
-static struct k_work adv_work;
+static void s_boot_mouse_notifications_changed(enum bt_hids_notify_evt evt)
+{
+	s_boot_mouse_notifications_enabled = evt == BT_HIDS_CCCD_EVT_NOTIFY_ENABLED;
+	s_connection_readiness_update();
+	if (s_boot_mouse_notifications_enabled)
+	{
+		k_work_submit(&s_hids_work);
+	}
+}
 
-static struct k_work pairing_work;
+static void s_button_retry_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	k_work_submit(&s_hids_work);
+}
+
+static K_WORK_DELAYABLE_DEFINE(button_retry_work, s_button_retry_fn);
+
+static bool s_is_adv_running;
+
+static struct k_work s_adv_work;
+
+static struct k_work s_pairing_work;
 
 struct pairing_data_mitm 
 {
@@ -144,41 +186,41 @@ struct pairing_data_mitm
 	unsigned int passkey;
 };
 
-K_MSGQ_DEFINE(mitm_queue, sizeof(struct pairing_data_mitm), CONFIG_BT_HIDS_MAX_CLIENT_COUNT, 4);
+K_MSGQ_DEFINE(s_mitm_queue, sizeof(struct pairing_data_mitm), CONFIG_BT_HIDS_MAX_CLIENT_COUNT, 4);
 
-static void advertising_continue(void);
+static void s_advertising_continue(void);
 
 #if CONFIG_SAMPLE_BT_DIRECTED_ADVERTISING
-static void bond_find(const struct bt_bond_info *info, void *user_data)
+static void s_bond_find(const struct bt_bond_info *info, void *user_data)
 {
-	if (k_msgq_put(&bonds_queue, (void *) &info->addr, K_NO_WAIT)) 
+	if (k_msgq_put(&s_bonds_queue, (void *) &info->addr, K_NO_WAIT)) 
     {
-		printk("No space in the queue for the bond.\n");
+		printk("Error: No space in the queue for the bond.\n");
 	}
 }
 #endif /* CONFIG_SAMPLE_BT_DIRECTED_ADVERTISING */
 
-static void advertising_continue(void)
+static void s_advertising_continue(void)
 {
 	struct bt_le_adv_param adv_param;
 
 #if CONFIG_SAMPLE_BT_DIRECTED_ADVERTISING
 	bt_addr_le_t addr;
 
-	if (!k_msgq_get(&bonds_queue, &addr, K_NO_WAIT)) 
+	if (!k_msgq_get(&s_bonds_queue, &addr, K_NO_WAIT)) 
     {
 		char addr_buf[BT_ADDR_LE_STR_LEN];
 		int err;
 
-		if (is_adv_running) 
+		if (s_is_adv_running) 
         {
 			err = bt_le_adv_stop();
 			if (err) 
             {
-				printk("Advertising failed to stop (err %d)\n", err);
+				printk("Error: Advertising failed to stop (err %d)\n", err);
 				return;
 			}
-			is_adv_running = false;
+			s_is_adv_running = false;
 		}
 
 		adv_param = *BT_LE_ADV_CONN_DIR(&addr);
@@ -188,12 +230,12 @@ static void advertising_continue(void)
 
 		if (err) 
         {
-			printk("Directed advertising failed to start (err %d)\n", err);
+			printk("Error: Directed advertising failed to start (err %d)\n", err);
 			return;
 		}
 
 		bt_addr_le_to_str(&addr, addr_buf, BT_ADDR_LE_STR_LEN);
-		printk("Direct advertising to %s started\n", addr_buf);
+		printk("Error: Direct advertising to %s started\n", addr_buf);
 		/* High-duty directed advertising expires on its own; connected() then gets an error code. */
 	} 
     else
@@ -201,48 +243,48 @@ static void advertising_continue(void)
 	{
 		int err;
 
-		if (is_adv_running) 
+		if (s_is_adv_running) 
         {
 			return;
 		}
 
 		adv_param = *BT_LE_ADV_CONN_FAST_2;
-		err = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+		err = bt_le_adv_start(&adv_param, s_ad, ARRAY_SIZE(s_ad), s_sd, ARRAY_SIZE(s_sd));
 		if (err) 
         {
-			printk("Advertising failed to start (err %d)\n", err);
+			printk("Error: Advertising failed to start (err %d)\n", err);
 			return;
 		}
 
 		printk("Regular advertising started\n");
 	}
 
-	is_adv_running = true;
+	s_is_adv_running = true;
 }
 
-static void advertising_start(void)
+static void s_advertising_start(void)
 {
 #if CONFIG_SAMPLE_BT_DIRECTED_ADVERTISING
-	k_msgq_purge(&bonds_queue);
-	bt_foreach_bond(BT_ID_DEFAULT, bond_find, NULL);
+	k_msgq_purge(&s_bonds_queue);
+	bt_foreach_bond(BT_ID_DEFAULT, s_bond_find, NULL);
 #endif /* CONFIG_SAMPLE_BT_DIRECTED_ADVERTISING */
 
-	k_work_submit(&adv_work);
+	k_work_submit(&s_adv_work);
 }
 
-static void advertising_process(struct k_work *work)
+static void s_advertising_process(struct k_work *work)
 {
-	advertising_continue();
+	s_advertising_continue();
 }
 
-static void pairing_process(struct k_work *work)
+static void s_pairing_process(struct k_work *work)
 {
 	int err;
 	struct pairing_data_mitm pairing_data;
 
 	char addr[BT_ADDR_LE_STR_LEN];
 
-	err = k_msgq_peek(&mitm_queue, &pairing_data);
+	err = k_msgq_peek(&s_mitm_queue, &pairing_data);
 	if (err) 
     {
 		return;
@@ -255,11 +297,11 @@ static void pairing_process(struct k_work *work)
 }
 
 
-static void connected(struct bt_conn *conn, uint8_t err)
+static void s_connected(struct bt_conn *conn, uint8_t err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
-	is_adv_running = false;
+	s_is_adv_running = false;
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
@@ -267,23 +309,23 @@ static void connected(struct bt_conn *conn, uint8_t err)
     {
 		if (err == BT_HCI_ERR_ADV_TIMEOUT) 
         {
-			printk("High-duty directed advertising to %s timed out\n", addr);
-			k_work_submit(&adv_work);
+			printk("Error: High-duty directed advertising to %s timed out\n", addr);
+			k_work_submit(&s_adv_work);
 		} 
         else
         {
-			printk("Failed to connect to %s 0x%02x %s\n", addr, err, bt_hci_err_to_str(err));
+			printk("Error: Failed to connect to %s 0x%02x %s\n", addr, err, bt_hci_err_to_str(err));
 		}
 		return;
 	}
 
 	printk("Connected %s\n", addr);
 
-	err = bt_hids_connected(&hids_obj, conn);
+	err = bt_hids_connected(&s_hids_obj, conn);
 
 	if (err) 
     {
-		printk("Failed to notify HID service about connection\n");
+		printk("Error: Failed to notify HID service about connection\n");
 		return;
 	}
 
@@ -291,29 +333,33 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	s_in_boot_mode = false;
 	s_buttons = 0;
 	s_buttons_sent = 0;
+	s_buttons_notifications_enabled = false;
+	s_movement_notifications_enabled = false;
+	s_boot_mouse_notifications_enabled = false;
+	s_connection_readiness_update();
 
 	err = bt_conn_le_param_update(conn, FAST_CONN_PARAM);
 	if (err)
 	{
-		printk("Connection parameter update request failed (err %d)\n", err);
+		printk("Error: Connection parameter update request failed (err %d)\n", err);
 	}
 }
 
 
-static void disconnected(struct bt_conn *conn, uint8_t reason)
+static void s_disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	int err;
 	char addr[BT_ADDR_LE_STR_LEN];
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	printk("Disconnected from %s, reason 0x%02x %s\n", addr, reason, bt_hci_err_to_str(reason));
+	printk("Error: Disconnected from %s, reason 0x%02x %s\n", addr, reason, bt_hci_err_to_str(reason));
 
-	err = bt_hids_disconnected(&hids_obj, conn);
+	err = bt_hids_disconnected(&s_hids_obj, conn);
 
 	if (err) 
     {
-		printk("Failed to notify HID service about disconnection\n");
+		printk("Error: Failed to notify HID service about disconnection\n");
 	}
 
 	if (s_conn == conn)
@@ -321,18 +367,22 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 		s_conn = NULL;
 		s_buttons = 0;
 		s_buttons_sent = 0;
+		s_buttons_notifications_enabled = false;
+		s_movement_notifications_enabled = false;
+		s_boot_mouse_notifications_enabled = false;
+		s_connection_readiness_update();
 		(void)k_work_cancel_delayable(&button_retry_work);
 	}
 
 	/* Completion callbacks are not guaranteed after a disconnect. */
-	atomic_set(&movement_in_flight, 0);
+	atomic_set(&s_movement_in_flight, 0);
 
-	advertising_start();
+	s_advertising_start();
 }
 
 
 #ifdef CONFIG_SAMPLE_BT_HIDS_SECURITY
-static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_security_err err)
+static void s_security_changed(struct bt_conn *conn, bt_security_t level, enum bt_security_err err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
@@ -344,20 +394,20 @@ static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_
 	} 
     else 
     {
-		printk("Security failed: %s level %u err %d %s\n", addr, level, err, bt_security_err_to_str(err));
+		printk("Error: Security failed: %s level %u err %d %s\n", addr, level, err, bt_security_err_to_str(err));
 	}
 }
 #endif /* CONFIG_SAMPLE_BT_HIDS_SECURITY */
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
-	.connected = connected,
-	.disconnected = disconnected,
+	.connected = s_connected,
+	.disconnected = s_disconnected,
 #ifdef CONFIG_SAMPLE_BT_HIDS_SECURITY
-	.security_changed = security_changed,
+	.security_changed = s_security_changed,
 #endif /* CONFIG_SAMPLE_BT_HIDS_SECURITY */
 };
 
-static void hids_pm_evt_handler(enum bt_hids_pm_evt evt, struct bt_conn *conn)
+static void s_hids_pm_evt_handler(enum bt_hids_pm_evt evt, struct bt_conn *conn)
 {
 	if (conn != s_conn) 
     {
@@ -379,9 +429,12 @@ static void hids_pm_evt_handler(enum bt_hids_pm_evt evt, struct bt_conn *conn)
 	default:
 		break;
 	}
+	s_buttons_sent = s_buttons ^ 1U;
+	s_connection_readiness_update();
+	k_work_submit(&s_hids_work);
 }
 
-static void hid_init(void)
+static void s_hid_init(void)
 {
 	int err;
 	struct bt_hids_init_param hids_init_param = { 0 };
@@ -478,12 +531,14 @@ static void hid_init(void)
 	hids_inp_rep = &hids_init_param.inp_rep_group_init.reports[0];
 	hids_inp_rep->size = INPUT_REP_BUTTONS_LEN;
 	hids_inp_rep->id = INPUT_REP_REF_BUTTONS_ID;
+	hids_inp_rep->handler_ext = s_input_report_notifications_changed;
 	hids_init_param.inp_rep_group_init.cnt++;
 
 	hids_inp_rep++;
 	hids_inp_rep->size = INPUT_REP_MOVEMENT_LEN;
 	hids_inp_rep->id = INPUT_REP_REF_MOVEMENT_ID;
 	hids_inp_rep->rep_mask = mouse_movement_mask;
+	hids_inp_rep->handler_ext = s_input_report_notifications_changed;
 	hids_init_param.inp_rep_group_init.cnt++;
 
 	hids_inp_rep++;
@@ -492,73 +547,74 @@ static void hid_init(void)
 	hids_init_param.inp_rep_group_init.cnt++;
 
 	hids_init_param.is_mouse = true;
-	hids_init_param.pm_evt_handler = hids_pm_evt_handler;
+	hids_init_param.pm_evt_handler = s_hids_pm_evt_handler;
+	hids_init_param.boot_mouse_notif_handler = s_boot_mouse_notifications_changed;
 
-	err = bt_hids_init(&hids_obj, &hids_init_param);
+	err = bt_hids_init(&s_hids_obj, &hids_init_param);
 	__ASSERT(err == 0, "HIDS initialization failed\n");
 }
 
-static void movement_sent(struct bt_conn *conn, void *user_data)
+static void s_movement_sent(struct bt_conn *conn, void *user_data)
 {
 	ARG_UNUSED(conn);
 	ARG_UNUSED(user_data);
 
-	if (atomic_dec(&movement_in_flight) > 0)
+	if (atomic_dec(&s_movement_in_flight) > 0)
 	{
-		k_work_submit(&hids_work);
+		k_work_submit(&s_hids_work);
 	}
 }
 
 #define BUTTON_RETRY_MS 10
 
 /* A lost release would leave the button stuck, so a failed send is retried. */
-static void buttons_flush(void)
+static void s_buttons_flush(void)
 {
 	const uint8_t value = s_buttons;
 	int err;
 
-	if (!s_conn || value == s_buttons_sent)
+	if (!s_conn || value == s_buttons_sent || !(s_in_boot_mode ? s_boot_mouse_notifications_enabled : s_buttons_notifications_enabled))
 	{
 		return;
 	}
 
 	if (s_in_boot_mode)
 	{
-		err = bt_hids_boot_mouse_inp_rep_send(&hids_obj, s_conn, &value, 0, 0, NULL);
+		err = bt_hids_boot_mouse_inp_rep_send(&s_hids_obj, s_conn, &value, 0, 0, NULL);
 	}
 	else
 	{
 		uint8_t report[INPUT_REP_BUTTONS_LEN] = { value, 0, 0 };
 
-		err = bt_hids_inp_rep_send_userdata(&hids_obj, s_conn, INPUT_REP_BUTTONS_INDEX, report, sizeof(report), NULL, NULL);
+		err = bt_hids_inp_rep_send_userdata(&s_hids_obj, s_conn, INPUT_REP_BUTTONS_INDEX, report, sizeof(report), NULL, NULL);
 	}
 
 	if (err)
 	{
-		printk("Failed to send button report: %d\n", err);
+		printk("Error: Failed to send button report: %d\n", err);
 		k_work_schedule(&button_retry_work, K_MSEC(BUTTON_RETRY_MS));
 		return;
 	}
 	s_buttons_sent = value;
 }
 
-static void mouse_movement_send(int16_t x_delta, int16_t y_delta)
+static void s_mouse_movement_send(int16_t x_delta, int16_t y_delta)
 {
 	int err;
 
-	if (!s_conn)
+	if (!s_conn || !(s_in_boot_mode ? s_boot_mouse_notifications_enabled : s_movement_notifications_enabled))
 	{
 		return;
 	}
 
-	atomic_inc(&movement_in_flight);
+	atomic_inc(&s_movement_in_flight);
 
 	if (s_in_boot_mode) 
     {
 		int8_t x_delta_sat = MAX(MIN(x_delta, SCHAR_MAX), SCHAR_MIN);
 		int8_t y_delta_sat = MAX(MIN(y_delta, SCHAR_MAX), SCHAR_MIN);
 
-		err = bt_hids_boot_mouse_inp_rep_send(&hids_obj, s_conn, &s_buttons_sent, x_delta_sat, y_delta_sat, movement_sent);
+		err = bt_hids_boot_mouse_inp_rep_send(&s_hids_obj, s_conn, &s_buttons_sent, x_delta_sat, y_delta_sat, s_movement_sent);
 	} 
     else 
     {
@@ -580,13 +636,13 @@ static void mouse_movement_send(int16_t x_delta, int16_t y_delta)
 		buffer[1] = (y_buff[0] << 4) | (x_buff[1] & 0x0f);
 		buffer[2] = (y_buff[1] << 4) | (y_buff[0] >> 4);
 
-		err = bt_hids_inp_rep_send_userdata(&hids_obj, s_conn, INPUT_REP_MOVEMENT_INDEX, buffer, sizeof(buffer), movement_sent, NULL);
+		err = bt_hids_inp_rep_send_userdata(&s_hids_obj, s_conn, INPUT_REP_MOVEMENT_INDEX, buffer, sizeof(buffer), s_movement_sent, NULL);
 	}
 
 	if (err) 
     {
-		printk("Failed to send report: %d\n", err);
-		atomic_dec(&movement_in_flight);
+		printk("Error: Failed to send report: %d\n", err);
+		atomic_dec(&s_movement_in_flight);
 	}
 }
 
@@ -595,31 +651,31 @@ static void mouse_movement_send(int16_t x_delta, int16_t y_delta)
 static int32_t pending_x;
 static int32_t pending_y;
 
-static void mouse_handler(struct k_work *work)
+static void s_mouse_handler(struct k_work *work)
 {
 	struct mouse_pos pos;
 
-	buttons_flush();
+	s_buttons_flush();
 
-	while (!k_msgq_get(&hids_queue, &pos, K_NO_WAIT)) 
+	while (!k_msgq_get(&s_hids_queue, &pos, K_NO_WAIT)) 
     {
 		pending_x += pos.x_val;
 		pending_y += pos.y_val;
 	}
 
 	/* movement_sent() resubmits this work once an in-flight report completes. */
-	if (atomic_get(&movement_in_flight) >= MOVEMENT_MAX_IN_FLIGHT || (!pending_x && !pending_y))
+	if (atomic_get(&s_movement_in_flight) >= MOVEMENT_MAX_IN_FLIGHT || (!pending_x && !pending_y))
 	{
 		return;
 	}
 
-	mouse_movement_send(CLAMP(pending_x, -0x7ff, 0x7ff), CLAMP(pending_y, -0x7ff, 0x7ff));
+	s_mouse_movement_send(CLAMP(pending_x, -0x7ff, 0x7ff), CLAMP(pending_y, -0x7ff, 0x7ff));
 	pending_x = 0;
 	pending_y = 0;
 }
 
 #if defined(CONFIG_SAMPLE_BT_HIDS_SECURITY_MITM)
-static void auth_passkey_display(struct bt_conn *conn, unsigned int passkey)
+static void s_auth_passkey_display(struct bt_conn *conn, unsigned int passkey)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
@@ -629,7 +685,7 @@ static void auth_passkey_display(struct bt_conn *conn, unsigned int passkey)
 }
 
 
-static void auth_passkey_confirm(struct bt_conn *conn, unsigned int passkey)
+static void s_auth_passkey_confirm(struct bt_conn *conn, unsigned int passkey)
 {
 	int err;
 
@@ -639,7 +695,7 @@ static void auth_passkey_confirm(struct bt_conn *conn, unsigned int passkey)
 	pairing_data.passkey = passkey;
 
 	k_sched_lock();
-	err = k_msgq_put(&mitm_queue, &pairing_data, K_NO_WAIT);
+	err = k_msgq_put(&s_mitm_queue, &pairing_data, K_NO_WAIT);
 	if (err) 
     {
 		printk("Pairing queue is full. Purge previous data.\n");
@@ -651,9 +707,9 @@ static void auth_passkey_confirm(struct bt_conn *conn, unsigned int passkey)
 	 * the same time. Passkey confirmation for next devices will
 	 * be proccess from queue after handling the earlier ones.
 	 */
-	if (k_msgq_num_used_get(&mitm_queue) == 1) 
+	if (k_msgq_num_used_get(&s_mitm_queue) == 1) 
     {
-		k_work_submit(&pairing_work);
+		k_work_submit(&s_pairing_work);
 	}
 	k_sched_unlock();
 }
@@ -665,20 +721,20 @@ static void auth_cancel(struct bt_conn *conn)
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	printk("Pairing cancelled: %s\n", addr);
+	printk("Error: Pairing cancelled: %s\n", addr);
 }
 
-static struct bt_conn_auth_cb conn_auth_callbacks = {
-	.passkey_display = auth_passkey_display,
-	.passkey_confirm = auth_passkey_confirm,
+static struct bt_conn_auth_cb s_conn_auth_callbacks = {
+	.passkey_display = s_auth_passkey_display,
+	.passkey_confirm = s_auth_passkey_confirm,
 	.cancel = auth_cancel,
 };
 #else
-static struct bt_conn_auth_cb conn_auth_callbacks;
+static struct bt_conn_auth_cb s_conn_auth_callbacks;
 #endif /* CONFIG_SAMPLE_BT_HIDS_SECURITY_MITM */
 
 #if defined(CONFIG_SAMPLE_BT_HIDS_SECURITY)
-static void pairing_complete(struct bt_conn *conn, bool bonded)
+static void s_pairing_complete(struct bt_conn *conn, bool bonded)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
@@ -688,7 +744,7 @@ static void pairing_complete(struct bt_conn *conn, bool bonded)
 }
 
 
-static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
+static void s_pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
@@ -697,11 +753,11 @@ static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
 		struct pairing_data_mitm pairing_data;
 
 		k_sched_lock();
-		uint32_t cnt = k_msgq_num_used_get(&mitm_queue);
+		uint32_t cnt = k_msgq_num_used_get(&s_mitm_queue);
 
 		for (size_t i = 0; i < cnt; i++) 
         {
-			int err = k_msgq_get(&mitm_queue, &pairing_data, K_NO_WAIT);
+			int err = k_msgq_get(&s_mitm_queue, &pairing_data, K_NO_WAIT);
 
 			__ASSERT(!err, "k_msgq_get failed: %d", err);
 
@@ -711,7 +767,7 @@ static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
 			} 
             else 
             {
-				err = k_msgq_put(&mitm_queue, &pairing_data, K_NO_WAIT);
+				err = k_msgq_put(&s_mitm_queue, &pairing_data, K_NO_WAIT);
 				__ASSERT(!err, "k_msgq_put failed: %d", err);
 			}
 		}
@@ -720,26 +776,26 @@ static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	printk("Pairing failed conn: %s, reason %d %s\n", addr, reason, bt_security_err_to_str(reason));
+	printk("Error: Pairing failed conn: %s, reason %d %s\n", addr, reason, bt_security_err_to_str(reason));
 }
 
 
-static struct bt_conn_auth_info_cb conn_auth_info_callbacks = {
-	.pairing_complete = pairing_complete,
-	.pairing_failed = pairing_failed
+static struct bt_conn_auth_info_cb s_conn_auth_info_callbacks = {
+	.pairing_complete = s_pairing_complete,
+	.pairing_failed = s_pairing_failed
 };
 #else
 static struct bt_conn_auth_info_cb conn_auth_info_callbacks;
 #endif /* defined(CONFIG_SAMPLE_BT_HIDS_SECURITY) */
 
 
-static void num_comp_reply(bool accept)
+static void s_num_comp_reply(bool accept)
 {
 	struct pairing_data_mitm pairing_data;
 	struct bt_conn *conn;
 
 	k_sched_lock();
-	if (k_msgq_get(&mitm_queue, &pairing_data, K_NO_WAIT) != 0) 
+	if (k_msgq_get(&s_mitm_queue, &pairing_data, K_NO_WAIT) != 0) 
     {
 		k_sched_unlock();
 		return;
@@ -760,41 +816,46 @@ static void num_comp_reply(bool accept)
 
 	bt_conn_unref(pairing_data.conn);
 
-	if (k_msgq_num_used_get(&mitm_queue)) 
+	if (k_msgq_num_used_get(&s_mitm_queue)) 
     {
-		k_work_submit(&pairing_work);
+		k_work_submit(&s_pairing_work);
 	}
 	k_sched_unlock();
 }
 
 // External linkage
 
+void im_hids_mouse_set_connection_callback(im_hids_mouse_connection_cb_t callback)
+{
+	s_connection_callback = callback;
+}
+
 bool im_hids_mouse_pairing_pending(void)
 {
-	return k_msgq_num_used_get(&mitm_queue) > 0;
+	return k_msgq_num_used_get(&s_mitm_queue) > 0;
 }
 
 void im_hids_mouse_pairing_reply(bool accept)
 {
-	num_comp_reply(accept);
+	s_num_comp_reply(accept);
 }
 
 void im_hids_mouse_button(bool left_down)
 {
 	s_buttons = left_down ? BIT(0) : 0;
-	k_work_submit(&hids_work);
+	k_work_submit(&s_hids_work);
 }
 
 void im_hids_mouse_move(int16_t dx, int16_t dy)
 {
 	const struct mouse_pos pos = { .x_val = dx, .y_val = dy };
 
-	if (k_msgq_put(&hids_queue, &pos, K_NO_WAIT))
+	if (k_msgq_put(&s_hids_queue, &pos, K_NO_WAIT))
 	{
 		printk("Warning: HID queue full, movement dropped (dx=%d dy=%d)\n", dx, dy);
 		return;
 	}
-	k_work_submit(&hids_work);
+	k_work_submit(&s_hids_work);
 }
 
 bool im_hids_mouse_init(void)
@@ -805,28 +866,28 @@ bool im_hids_mouse_init(void)
     {
 		if (IS_ENABLED(CONFIG_SAMPLE_BT_HIDS_SECURITY_MITM)) 
         {
-			err = bt_conn_auth_cb_register(&conn_auth_callbacks);
+			err = bt_conn_auth_cb_register(&s_conn_auth_callbacks);
 			if (err) 
             {
-				printk("Failed to register authorization callbacks.\n");
+				printk("Error: Failed to register authorization callbacks.\n");
 				return false;
 			}
 		}
-		err = bt_conn_auth_info_cb_register(&conn_auth_info_callbacks);
+		err = bt_conn_auth_info_cb_register(&s_conn_auth_info_callbacks);
 		if (err) 
         {
-			printk("Failed to register authorization info callbacks.\n");
+			printk("Error: Failed to register authorization info callbacks.\n");
 			return false;
 		}
 	}
 
 	/* DIS initialized at system boot with SYS_INIT macro. */
-	hid_init();
+	s_hid_init();
 
     err = bt_enable(NULL);
 	if(err)
     {
-	    printk("Bluetooth init failed (err %d)\n", err);
+	    printk("Error: Bluetooth init failed (err %d)\n", err);
         return false;
     }
 
@@ -837,12 +898,12 @@ bool im_hids_mouse_init(void)
 /* Must be called after bt_enable(). */
 bool im_hids_mouse_start(void)
 {
-	k_work_init(&hids_work, mouse_handler);
-	k_work_init(&adv_work, advertising_process);
+	k_work_init(&s_hids_work, s_mouse_handler);
+	k_work_init(&s_adv_work, s_advertising_process);
 
 	if (IS_ENABLED(CONFIG_SAMPLE_BT_HIDS_SECURITY_MITM)) 
     { 
-        k_work_init(&pairing_work, pairing_process);
+        k_work_init(&s_pairing_work, s_pairing_process);
 	}
 
 	if (IS_ENABLED(CONFIG_SETTINGS)) 
@@ -850,7 +911,7 @@ bool im_hids_mouse_start(void)
 		settings_load();
 	}
 
-	advertising_start();
+	s_advertising_start();
 
     printk("Mouse started\n");
 	return true;
