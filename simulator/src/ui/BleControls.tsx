@@ -4,8 +4,6 @@ type BleControlsProps = {
   packetRate: number
   droppedPackets: number
   error: string
-  inputSource: 'simulated' | 'ble'
-  onSourceChange: (source: 'simulated' | 'ble') => void
   onConnect: () => void
   onDisconnect: () => void
 }
@@ -16,8 +14,6 @@ export function BleControls({
   packetRate,
   droppedPackets,
   error,
-  inputSource,
-  onSourceChange,
   onConnect,
   onDisconnect,
 }: BleControlsProps) {
@@ -44,30 +40,6 @@ export function BleControls({
         </p>
       )}
       {error && <p className="ble-message" role="alert">{error}</p>}
-
-      <fieldset className="input-source">
-        <legend>Simulator input source</legend>
-        <label>
-          <input
-            type="radio"
-            name="input-source"
-            value="simulated"
-            checked={inputSource === 'simulated'}
-            onChange={() => onSourceChange('simulated')}
-          />
-          Simulated controls
-        </label>
-        <label>
-          <input
-            type="radio"
-            name="input-source"
-            value="ble"
-            checked={inputSource === 'ble'}
-            onChange={() => onSourceChange('ble')}
-          />
-          Live BLE pose
-        </label>
-      </fieldset>
     </section>
   )
 }

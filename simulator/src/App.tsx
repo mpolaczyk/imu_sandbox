@@ -40,7 +40,6 @@ function App() {
   const [smoothingAlpha, setSmoothingAlpha] = useState(DEFAULT_SMOOTHING_ALPHA)
   const [calibration, setCalibration] = useState<Angles>(DEFAULT_ANGLES)
   const [smoothedCursor, setSmoothedCursor] = useState(() => DEFAULT_CURSOR.clone())
-  const [inputSource, setInputSource] = useState<'simulated' | 'ble'>('simulated')
   const [livePose, setLivePose] = useState<PosePacket | null>(null)
   const [liveReference, setLiveReference] = useState(() => new Quaternion())
   const [bleConnected, setBleConnected] = useState(false)
@@ -75,16 +74,16 @@ function App() {
     return liveReference.clone().invert().multiply(deviceOrientation).normalize()
   }, [livePose, liveReference])
   const effectiveAngles = useMemo(
-    () => (inputSource === 'ble' && liveOrientation ? quaternionToAngles(liveOrientation) : applyCalibration(angles, calibration)),
-    [inputSource, liveOrientation, angles, calibration],
+    () => (liveOrientation ? quaternionToAngles(liveOrientation) : applyCalibration(angles, calibration)),
+    [liveOrientation, angles, calibration],
   )
   const screen = useMemo(() => createScreen({ distanceM }), [distanceM])
   const orientation = useMemo(
     () =>
-      inputSource === 'ble' && liveOrientation
+      liveOrientation
         ? liveOrientation
         : headQuaternion(effectiveAngles.yawDeg, effectiveAngles.pitchDeg, effectiveAngles.rollDeg),
-    [inputSource, liveOrientation, effectiveAngles],
+    [liveOrientation, effectiveAngles],
   )
   const rawHit = useMemo(
     () => intersectNoseRayWithScreen(NOSE_ORIGIN, orientation, screen),
@@ -109,7 +108,7 @@ function App() {
   }, [rawCursor, smoothingAlpha])
 
   const handleCalibrate = () => {
-    if (inputSource === 'ble' && livePose) {
+    if (livePose) {
       setLiveReference(poseQuaternion(livePose))
     } else {
       setCalibration(angles)
@@ -151,8 +150,6 @@ function App() {
             packetRate={bleStats.packetRate}
             droppedPackets={bleStats.droppedPackets}
             error={bleError}
-            inputSource={inputSource}
-            onSourceChange={setInputSource}
             onConnect={() => void client.reconnect()}
             onDisconnect={() => client.disconnect()}
           />
