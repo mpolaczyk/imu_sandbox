@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20.0)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(imu_mouse)
+project(firmware)
 
 FILE(GLOB app_sources src/*.c)
 list(FILTER app_sources EXCLUDE REGEX "/(hids_mouse|ble_gatt)\\.c$")

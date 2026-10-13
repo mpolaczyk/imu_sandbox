@@ -2,7 +2,7 @@
 .github/
 .vscode/
 
-firmware/imu_mouse/.venv/
-firmware/imu_mouse/build_*/
+firmware/.venv/
+firmware/build_*/
 simulator/node_modules/
 simulator/dist/
