@@ -28,6 +28,29 @@ config IM_IMU_SAMPLE_RATE_HZ
 	default 208
 	help
 		12, 26, 52, 104, 208, 416, 833, 1666, 3332 and 6664 Hz
+
+config IM_IMU_PRINT_SAMPLE
+	bool "Print each IMU sample"
+	default n
+
+config IM_IMU_PRINT_PERIODIC_STATS
+	bool "Periodic IMU statistics"
+	default n
+
+config IM_IMU_STATS_PERIOD_MS
+	int "IMU statistics period in milliseconds"
+	depends on IM_IMU_PRINT_PERIODIC_STATS
+	default 1000
+
+config IM_BLE_GATT_PRINT_PERIODIC_STATS
+	bool "Periodic BLE GATT statistics"
+	depends on IM_BLE_DEVICE_GATT
+	default n
+
+config IM_BLE_GATT_STATS_PERIOD_MS
+	int "BLE GATT statistics period in milliseconds"
+	depends on IM_BLE_GATT_PRINT_PERIODIC_STATS
+	default 1000
 		
 config SAMPLE_BT_HIDS_SECURITY
 	bool "Bluetooth LE security"

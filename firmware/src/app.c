@@ -76,7 +76,7 @@ void im_app_on_button(bool pressed)
 #endif
 }
 
-void im_app_on_imu_sample(float gx, float gy, float gz, float ax, float ay, float az)
+void im_app_on_imu_sample(float gx, float gy, float gz, float ax, float ay, float az, float dt_s)
 {
 	enum im_app_state state = im_state_get();
 	if (state != IM_APP_STATE_CALIBRATING && state != IM_APP_STATE_RUNNING)
@@ -85,7 +85,7 @@ void im_app_on_imu_sample(float gx, float gy, float gz, float ax, float ay, floa
 	}
 
 	struct im_fusion_rates rates;
-	const bool fusion_valid = im_fusion_update(gx, gy, gz, ax, ay, az, &rates);
+	const bool fusion_valid = im_fusion_update(gx, gy, gz, ax, ay, az, dt_s, &rates);
 	if (!fusion_valid)
 	{
 		return;
@@ -96,9 +96,9 @@ void im_app_on_imu_sample(float gx, float gy, float gz, float ax, float ay, floa
 	}
 
 #if defined(CONFIG_IM_BLE_DEVICE_MOUSE)
-	const float px_per_rad_sample = (float)s_px_per_rad[s_sens_idx] / CONFIG_IM_IMU_SAMPLE_RATE_HZ;
-	const float fx = s_mouse_rem_x + MOUSE_X_SIGN * rates.yaw * px_per_rad_sample;
-	const float fy = s_mouse_rem_y + MOUSE_Y_SIGN * rates.pitch * px_per_rad_sample;
+	const float px_per_rad = (float)s_px_per_rad[s_sens_idx];
+	const float fx = s_mouse_rem_x + MOUSE_X_SIGN * rates.yaw * px_per_rad * dt_s;
+	const float fy = s_mouse_rem_y + MOUSE_Y_SIGN * rates.pitch * px_per_rad * dt_s;
 	const int16_t dx = (int16_t)fx;
 	const int16_t dy = (int16_t)fy;
 	s_mouse_rem_x = fx - dx;

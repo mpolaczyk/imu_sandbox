@@ -53,8 +53,6 @@ static void s_update_streaming(void)
 }
 
 // Diagnostics, printed once per second
-#define PRINT_PERIODIC_STATS 1
-#define STATS_PERIOD_MS 1000
 static uint32_t s_stat_ok, s_stat_err, s_stat_max_us, s_stat_dropped, s_stat_gated;
 static int s_stat_last_err;
 static int64_t s_stat_next_ms;
@@ -221,13 +219,13 @@ static void s_ble_gatt_thread_fn(void *p1, void *p2, void *p3)
 				s_stat_last_err = err;
 			}
 		}
-#if PRINT_PERIODIC_STATS
+#if CONFIG_IM_BLE_GATT_PRINT_PERIODIC_STATS
 		const int64_t now_ms = k_uptime_get();
 		if (have && now_ms >= s_stat_next_ms)
 		{
 			printk("BLE GATT notify: ok=%u err=%u (last %d) dropped=%u gated=%u max_call=%u us\n", s_stat_ok, s_stat_err, s_stat_last_err, s_stat_dropped, s_stat_gated, s_stat_max_us);
 			s_stat_ok = s_stat_err = s_stat_max_us = s_stat_dropped = s_stat_gated = 0;
-			s_stat_next_ms = now_ms + 1000;
+			s_stat_next_ms = now_ms + CONFIG_IM_BLE_GATT_STATS_PERIOD_MS;
 		}
 #endif
 	}

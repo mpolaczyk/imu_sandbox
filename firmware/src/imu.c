@@ -23,9 +23,6 @@ static K_SEM_DEFINE(s_imu_data_ready, 0, 1);
 static atomic_t s_streaming_requested;
 
 // Measurement statistics
-#define IMU_PRINT_SAMPLE 0
-#define IMU_PRINT_PERIODIC_STATS 1
-#define IMU_STATS_PERIOD_MS 1000
 #define IMU_READY_TIMEOUT_MS 2000
 #define IMU_READY_POLL_MS 5
 #define IMU_WATCHDOG_MS 50
@@ -37,6 +34,8 @@ static atomic_t s_not_acquired_count; 	// Semaphore timeouts, when samples don't
 // Measurement data
 static struct sensor_value s_accel[3];
 static struct sensor_value s_gyro[3];
+static uint32_t s_last_sample_cycles;
+static bool s_sample_time_valid;
 static im_imu_sample_cb_t s_sample_cb;
 static im_imu_error_cb_t s_error_cb;
 
@@ -76,14 +75,25 @@ bool s_imu_collect()
 		printk("Error: IMU Sensor sample update error\n");
 		return false;
 	}
+	const uint32_t sample_cycles = k_cycle_get_32();
+	float dt_s = 0.0f;
+	if (s_sample_time_valid)
+	{
+		const uint32_t elapsed_cycles = sample_cycles - s_last_sample_cycles;
+		dt_s = (float)k_cyc_to_us_floor64(elapsed_cycles) * 1e-6f;
+	}
+	s_last_sample_cycles = sample_cycles;
+	s_sample_time_valid = true;
 	sensor_channel_get(s_imu, SENSOR_CHAN_ACCEL_XYZ, s_accel);
 	sensor_channel_get(s_imu, SENSOR_CHAN_GYRO_XYZ, s_gyro);
 	// Notify callback
 	if (s_sample_cb)
 	{
-		s_sample_cb(sensor_value_to_float(&s_gyro[0]), sensor_value_to_float(&s_gyro[1]), sensor_value_to_float(&s_gyro[2]), sensor_value_to_float(&s_accel[0]), sensor_value_to_float(&s_accel[1]), sensor_value_to_float(&s_accel[2]));
+		s_sample_cb(sensor_value_to_float(&s_gyro[0]), sensor_value_to_float(&s_gyro[1]),
+			    sensor_value_to_float(&s_gyro[2]), sensor_value_to_float(&s_accel[0]),
+			    sensor_value_to_float(&s_accel[1]), sensor_value_to_float(&s_accel[2]), dt_s);
 	}
-#if IMU_PRINT_SAMPLE
+#if CONFIG_IM_IMU_PRINT_SAMPLE
 	char out_str[64];
 	sprintf(out_str, "accel x:%f ms/2 y:%f ms/2 z:%f ms/2", sensor_value_to_float(&s_accel[0]), sensor_value_to_float(&s_accel[1]), sensor_value_to_float(&s_accel[2]));
 	printk("%s\n", out_str);
@@ -117,6 +127,7 @@ static void s_imu_thread_fn(void *p1, void *p2, void *p3)
 				return;
 			}
 			streaming = true;
+			s_sample_time_valid = false;
 			im_fusion_reset();
 			continue;
 		}
@@ -131,6 +142,7 @@ static void s_imu_thread_fn(void *p1, void *p2, void *p3)
 				return;
 			}
 			streaming = false;
+			s_sample_time_valid = false;
 			continue;
 		}
 
@@ -145,7 +157,7 @@ static void s_imu_thread_fn(void *p1, void *p2, void *p3)
 			return;
 		}
 		// Statistics reporting
-#if IMU_PRINT_PERIODIC_STATS
+#if CONFIG_IM_IMU_PRINT_PERIODIC_STATS
 		atomic_inc(&s_sample_count);
 		const int64_t now_ms = k_uptime_get();
 		if (now_ms >= s_next_report_ms)
@@ -154,7 +166,7 @@ static void s_imu_thread_fn(void *p1, void *p2, void *p3)
 				(int)atomic_set(&s_data_ready_count, 0), 
 				(int)atomic_set(&s_sample_count, 0), 
 				(int)atomic_set(&s_not_acquired_count, 0));
-			s_next_report_ms = now_ms + IMU_STATS_PERIOD_MS;
+			s_next_report_ms = now_ms + CONFIG_IM_IMU_STATS_PERIOD_MS;
 		}
 #endif
 	}
