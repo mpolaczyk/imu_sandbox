@@ -17,12 +17,12 @@ describe('intersectNoseRayWithScreen', () => {
     expect(hit?.screenY).toBeCloseTo(0, 6)
   })
 
-  it('moves the hit point right for positive yaw', () => {
+  it('moves the hit point left for positive right-hand-rule yaw', () => {
     const hit = intersectNoseRayWithScreen(nose, headQuaternion(12, 0, 0), screen)
 
     expect(hit).not.toBeNull()
-    expect(hit?.screenX ?? 0).toBeGreaterThan(0)
-    expect(hit?.u ?? 0).toBeGreaterThan(0.5)
+    expect(hit?.screenX ?? 0).toBeLessThan(0)
+    expect(hit?.u ?? 0).toBeLessThan(0.5)
   })
 
   it('moves the hit point up for positive pitch', () => {
@@ -45,6 +45,6 @@ describe('intersectNoseRayWithScreen', () => {
 
     expect(nearHit).not.toBeNull()
     expect(farHit).not.toBeNull()
-    expect((farHit?.screenX ?? 0)).toBeGreaterThan(nearHit?.screenX ?? 0)
+    expect(Math.abs(farHit?.screenX ?? 0)).toBeGreaterThan(Math.abs(nearHit?.screenX ?? 0))
   })
 })

@@ -17,7 +17,7 @@ const NOSE_ORIGIN = new Vector3(0, 0, 0)
 function HeadModel({ orientation }: { orientation: Quaternion }) {
   return (
     <group quaternion={orientation}>
-      <mesh position={[0, 0, -0.09]}>
+      <mesh position={[0, 0, 0.09]}>
         <sphereGeometry args={[0.11, 32, 32]} />
         <meshStandardMaterial color="#9ca3af" metalness={0.1} roughness={0.85} />
       </mesh>
@@ -25,7 +25,7 @@ function HeadModel({ orientation }: { orientation: Quaternion }) {
         <sphereGeometry args={[0.015, 16, 16]} />
         <meshStandardMaterial color="#f59e0b" />
       </mesh>
-      <mesh position={[0, 0, -0.02]} rotation={[Math.PI / 2, 0, 0]}>
+      <mesh position={[0, 0, -0.02]} rotation={[-Math.PI / 2, 0, 0]}>
         <coneGeometry args={[0.025, 0.08, 20]} />
         <meshStandardMaterial color="#d1d5db" />
       </mesh>
@@ -66,7 +66,7 @@ function SceneContents({ orientation, screen, rawHit, smoothedCursor }: Simulato
       <color attach="background" args={['#020617']} />
       <ambientLight intensity={0.75} />
       <directionalLight position={[1.5, 2.2, 1.4]} intensity={1.1} />
-      <gridHelper args={[2, 20, '#1d4ed8', '#1f2937']} position={[0, -0.22, 0.5]} />
+      <gridHelper args={[2, 20, '#1d4ed8', '#1f2937']} position={[0, -0.22, -0.5]} />
       <axesHelper args={[0.4]} />
       <HeadModel orientation={orientation} />
       <MonitorPlane screen={screen} />
@@ -103,7 +103,7 @@ export function SimulatorScene(props: SimulatorSceneProps) {
         </div>
       </div>
       <div className="scene-canvas">
-        <Canvas camera={{ position: [0.8, 0.4, 1.1], fov: 45 }}>
+        <Canvas camera={{ position: [0.5, 0.5, 1.1], fov: 45 }}>
           <SceneContents {...props} />
         </Canvas>
       </div>

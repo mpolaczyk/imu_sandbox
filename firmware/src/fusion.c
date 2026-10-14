@@ -138,8 +138,9 @@ static void s_update_calibration(float gx, float gy, float gz)
 	if (s_cal_count > 0)
 	{
 		const float inv = 1.0f / s_cal_count;
-		if (fabsf(gx - s_cal_sum[0] * inv) > CAL_MOTION_RAD_S || fabsf(gy - s_cal_sum[1] * inv) > CAL_MOTION_RAD_S ||
-		    fabsf(gz - s_cal_sum[2] * inv) > CAL_MOTION_RAD_S)
+		if (fabsf(gx - s_cal_sum[0] * inv) > CAL_MOTION_RAD_S 
+			|| fabsf(gy - s_cal_sum[1] * inv) > CAL_MOTION_RAD_S 
+			|| fabsf(gz - s_cal_sum[2] * inv) > CAL_MOTION_RAD_S)
 		{
 			s_cal_count = 0;
 			s_cal_sum[0] = s_cal_sum[1] = s_cal_sum[2] = 0.0f;

@@ -3,7 +3,7 @@ import { Euler, MathUtils, Quaternion, Vector2, Vector3 } from 'three'
 import './App.css'
 import { ema } from './math/filters'
 import { createScreen, forwardVector, intersectNoseRayWithScreen } from './math/headPointer'
-import { headQuaternion } from './math/orientation'
+import { headQuaternion, relativeImuOrientation } from './math/orientation'
 import { BlePoseClient, type PosePacket, type PoseStats } from './ble/ble-client'
 import { SimulatorScene } from './scene/SimulatorScene'
 import { applyCalibration, type Angles } from './simulation/calibration'
@@ -23,7 +23,7 @@ function quaternionToAngles(quaternion: Quaternion): Angles {
   const euler = new Euler().setFromQuaternion(quaternion, 'YXZ')
   return {
     yawDeg: MathUtils.radToDeg(euler.y),
-    pitchDeg: -MathUtils.radToDeg(euler.x),
+    pitchDeg: MathUtils.radToDeg(euler.x),
     rollDeg: MathUtils.radToDeg(euler.z),
   }
 }
@@ -41,7 +41,7 @@ function App() {
   const [calibration, setCalibration] = useState<Angles>(DEFAULT_ANGLES)
   const [smoothedCursor, setSmoothedCursor] = useState(() => DEFAULT_CURSOR.clone())
   const [livePose, setLivePose] = useState<PosePacket | null>(null)
-  const [liveReference, setLiveReference] = useState(() => new Quaternion())
+  const [liveReference, setLiveReference] = useState<Quaternion | null>(null)
   const [bleConnected, setBleConnected] = useState(false)
   const [bleStats, setBleStats] = useState(DEFAULT_POSE_STATS)
   const [bleError, setBleError] = useState('')
@@ -49,13 +49,21 @@ function App() {
   useEffect(() => {
     const unsubscribePose = client.onPose((pose, stats) => {
       setLivePose(pose)
+      const receivedOrientation = poseQuaternion(pose)
+      setLiveReference((reference) => reference ?? receivedOrientation)
       setBleStats(stats)
     })
     const unsubscribeConnect = client.onConnect(() => {
       setBleConnected(true)
+      setLivePose(null)
+      setLiveReference(null)
       setBleError('')
     })
-    const unsubscribeDisconnect = client.onDisconnect(() => setBleConnected(false))
+    const unsubscribeDisconnect = client.onDisconnect(() => {
+      setBleConnected(false)
+      setLivePose(null)
+      setLiveReference(null)
+    })
     const unsubscribeError = client.onError((error) => setBleError(error.message))
     return () => {
       unsubscribePose()
@@ -67,11 +75,11 @@ function App() {
   }, [client])
 
   const liveOrientation = useMemo(() => {
-    if (!livePose) {
+    if (!livePose || !liveReference) {
       return null
     }
     const deviceOrientation = poseQuaternion(livePose)
-    return liveReference.clone().invert().multiply(deviceOrientation).normalize()
+    return relativeImuOrientation(deviceOrientation, liveReference)
   }, [livePose, liveReference])
   const effectiveAngles = useMemo(
     () => (liveOrientation ? quaternionToAngles(liveOrientation) : applyCalibration(angles, calibration)),
@@ -121,7 +129,7 @@ function App() {
     setDistanceM(DEFAULT_DISTANCE_M)
     setSmoothingAlpha(DEFAULT_SMOOTHING_ALPHA)
     setCalibration(DEFAULT_ANGLES)
-    setLiveReference(new Quaternion())
+    setLiveReference(livePose ? poseQuaternion(livePose) : null)
     setSmoothedCursor(DEFAULT_CURSOR.clone())
   }
 

@@ -17,7 +17,7 @@ export type CursorHit = {
   v: number
 }
 
-const FORWARD = new Vector3(0, 0, 1)
+const FORWARD = new Vector3(0, 0, -1)
 
 export function createScreen(options?: {
   distanceM?: number
@@ -29,8 +29,8 @@ export function createScreen(options?: {
   const heightM = options?.heightM ?? 0.299
 
   return {
-    center: new Vector3(0, 0, distanceM),
-    normal: new Vector3(0, 0, 1),
+    center: new Vector3(0, 0, -distanceM),
+    normal: new Vector3(0, 0, -1),
     right: new Vector3(1, 0, 0),
     up: new Vector3(0, 1, 0),
     widthM,
