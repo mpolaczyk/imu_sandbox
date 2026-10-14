@@ -23,10 +23,34 @@
  *
  * The output rates are taken about gravity (yaw) and about the horizontal part of body Y (pitch),
  * so the cursor motion does not depend on how the device is rolled.
+ *
+ * Sensor axes (device in hand with USB port pointing forward), based on stationary measurements:
+ * - X-axis: Longitudinally along the board. Positive value away from the USB port.
+ * - Y-axis: Laterally across the board. Positive value towards the right side.
+ * - Z-axis: Perpendicular to the board. Positive value points up when the board lies flat.
+ *
+ * Positive rotations follow the right-hand rule:
+ * - Roll about +X: +Y rotates toward +Z.
+ * - Pitch about +Y: +Z rotates toward +X.
+ * - Yaw about +Z: +X rotates toward +Y.
+ *
+ * TOP VIEW
+ *                USB PORT
+ *                forward ^
+ *                        |
+ *             +------------------+
+ *             |                  |----> +Y (right)
+ *             |      DEVICE      |
+ *             |                  |
+ *             +------------------+
+ *                        |
+ *                        v
+ *                 +X (away from USB)
+ *
+ *     +Z points up, toward the viewer.
  */
 
 #define GRAVITY 9.80665f
-#define FUSION_DT (1.0f / CONFIG_IM_IMU_SAMPLE_RATE_HZ)
 // Mahony proportional gain (rad/s per unit error): higher trusts the accelerometer more
 #define FUSION_KP 1.0f
 // Accelerometer is used for tilt correction only while |a| is within this of 1 g
@@ -77,9 +101,9 @@ static void s_init_from_accel(float ax, float ay, float az)
 		return;
 	}
 	ax /= n; ay /= n; az /= n;
-	// Shortest rotation taking (0,0,1) to the measured up direction: q = (1 + az, -ay, ax, 0)
+	// Body-to-world rotation taking measured up to world +Z: q = (1 + az, ay, -ax, 0)
 	float w = 1.0f + az;
-	float x = -ay, y = ax;
+	float x = ay, y = -ax;
 	const float qn = sqrtf(w * w + x * x + y * y);
 	if (qn < 1e-6f)
 	{
@@ -93,21 +117,27 @@ static void s_init_from_accel(float ax, float ay, float az)
 	s_q_init = true;
 }
 
-// Gyro in rad/s (bias removed), accel in m/s^2
-static void s_update_orientation(float gx, float gy, float gz, float ax, float ay, float az, float a_norm)
+static void s_get_up_in_body(float *ux, float *uy, float *uz)
+{
+	*ux = 2.0f * (s_q1 * s_q3 - s_q0 * s_q2);
+	*uy = 2.0f * (s_q0 * s_q1 + s_q2 * s_q3);
+	*uz = s_q0 * s_q0 - s_q1 * s_q1 - s_q2 * s_q2 + s_q3 * s_q3;
+}
+
+// Gyro in rad/s (bias removed), accel in m/s^2, elapsed time in seconds
+static void s_update_orientation(float gx, float gy, float gz, float ax, float ay, float az, float a_norm, float dt_s)
 {
 	if (fabsf(a_norm - GRAVITY) < ACCEL_TRUST_TOL)
 	{
 		// Estimated up direction in the body frame
-		const float vx = 2.0f * (s_q1 * s_q3 - s_q0 * s_q2);
-		const float vy = 2.0f * (s_q0 * s_q1 + s_q2 * s_q3);
-		const float vz = s_q0 * s_q0 - s_q1 * s_q1 - s_q2 * s_q2 + s_q3 * s_q3;
+		float vx, vy, vz;
+		s_get_up_in_body(&vx, &vy, &vz);
 		ax /= a_norm; ay /= a_norm; az /= a_norm;
 		gx += FUSION_KP * (ay * vz - az * vy);
 		gy += FUSION_KP * (az * vx - ax * vz);
 		gz += FUSION_KP * (ax * vy - ay * vx);
 	}
-	const float h = 0.5f * FUSION_DT;
+	const float h = 0.5f * dt_s;
 	const float q0 = s_q0, q1 = s_q1, q2 = s_q2, q3 = s_q3;
 	s_q0 += h * (-q1 * gx - q2 * gy - q3 * gz);
 	s_q1 += h * (q0 * gx + q2 * gz - q3 * gy);
@@ -117,7 +147,7 @@ static void s_update_orientation(float gx, float gy, float gz, float ax, float a
 	s_q0 *= n; s_q1 *= n; s_q2 *= n; s_q3 *= n;
 }
 
-bool im_fusion_update(float gx, float gy, float gz, float ax, float ay, float az, struct im_fusion_rates *out)
+bool im_fusion_update(float gx, float gy, float gz, float ax, float ay, float az, float dt_s, struct im_fusion_rates *out)
 {
 	const float a_norm = sqrtf(ax * ax + ay * ay + az * az);
 	if (!s_q_init)
@@ -128,6 +158,8 @@ bool im_fusion_update(float gx, float gy, float gz, float ax, float ay, float az
 	// Initial bias calibration: device must lie still for CAL_SAMPLES
 	if (!s_cal_done)
 	{
+		/* This variation-only check can mistake steady rotation for gyro bias. */
+#ifndef CONFIG_IM_IMU_SKIP_CALIBRATION_MOTION_CHECK
 		if (s_cal_count > 0)
 		{
 			const float inv = 1.0f / s_cal_count;
@@ -138,6 +170,7 @@ bool im_fusion_update(float gx, float gy, float gz, float ax, float ay, float az
 				s_cal_sum[0] = s_cal_sum[1] = s_cal_sum[2] = 0.0f;
 			}
 		}
+#endif
 		s_cal_sum[0] += gx;
 		s_cal_sum[1] += gy;
 		s_cal_sum[2] += gz;
@@ -165,17 +198,21 @@ bool im_fusion_update(float gx, float gy, float gz, float ax, float ay, float az
 	const bool settled = s_still_count >= STILL_SAMPLES;
 	if (settled)
 	{
-		s_bias[0] += BIAS_ALPHA * (gx - s_bias[0]);
-		s_bias[1] += BIAS_ALPHA * (gy - s_bias[1]);
-		s_bias[2] += BIAS_ALPHA * (gz - s_bias[2]);
+		float bias_alpha = BIAS_ALPHA * dt_s * CONFIG_IM_IMU_SAMPLE_RATE_HZ;
+		if (bias_alpha > 1.0f)
+		{
+			bias_alpha = 1.0f;
+		}
+		s_bias[0] += bias_alpha * (gx - s_bias[0]);
+		s_bias[1] += bias_alpha * (gy - s_bias[1]);
+		s_bias[2] += bias_alpha * (gz - s_bias[2]);
 	}
 
-	s_update_orientation(cx, cy, cz, ax, ay, az, a_norm);
+	s_update_orientation(cx, cy, cz, ax, ay, az, a_norm, dt_s);
 
 	// Rates about gravity (yaw) and about the horizontal part of body Y (pitch): independent of roll
-	const float ux = 2.0f * (s_q1 * s_q3 - s_q0 * s_q2);
-	const float uy = 2.0f * (s_q0 * s_q1 + s_q2 * s_q3);
-	const float uz = s_q0 * s_q0 - s_q1 * s_q1 - s_q2 * s_q2 + s_q3 * s_q3;
+	float ux, uy, uz;
+	s_get_up_in_body(&ux, &uy, &uz);
 	float yaw_rate = cx * ux + cy * uy + cz * uz;
 	const float px = -uy * ux;
 	const float py = 1.0f - uy * uy;
