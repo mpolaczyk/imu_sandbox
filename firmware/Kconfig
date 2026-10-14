@@ -29,6 +29,13 @@ config IM_IMU_SAMPLE_RATE_HZ
 	help
 		12, 26, 52, 104, 208, 416, 833, 1666, 3332 and 6664 Hz
 
+config IM_IMU_SKIP_CALIBRATION_MOTION_CHECK
+	bool "Debug: accept motion during startup gyro calibration"
+	default y
+	help
+	  Development only. Calibration completes after a fixed sample count even if
+	  the device moves (e.g. on a train); expect gyro bias drift.
+
 config IM_IMU_PRINT_SAMPLE
 	bool "Print each IMU sample"
 	default n

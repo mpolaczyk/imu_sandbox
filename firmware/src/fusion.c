@@ -4,6 +4,7 @@
 
 #include "fusion.h"
 #include "imu.h"
+#include "math3d.h"
 
 /*
  * Sensor fusion: gyro + accelerometer -> yaw/pitch rates for the cursor.
@@ -70,7 +71,7 @@ static bool s_cal_done;
 static uint32_t s_cal_count;
 static float s_cal_sum[3];
 // Orientation (body to world), gravity-referenced; yaw is gyro-only
-static float s_q0 = 1.0f, s_q1, s_q2, s_q3;
+static im_quat s_orientation = {1.0f, 0.0f, 0.0f, 0.0f};
 static bool s_q_init;
 static float s_bias[3];
 static uint32_t s_still_count;
@@ -82,10 +83,7 @@ void im_fusion_reset(void)
 	s_cal_sum[0] = 0.0f;
 	s_cal_sum[1] = 0.0f;
 	s_cal_sum[2] = 0.0f;
-	s_q0 = 1.0f;
-	s_q1 = 0.0f;
-	s_q2 = 0.0f;
-	s_q3 = 0.0f;
+	s_orientation = im_quat_identity();
 	s_q_init = false;
 	s_bias[0] = 0.0f;
 	s_bias[1] = 0.0f;
@@ -95,56 +93,71 @@ void im_fusion_reset(void)
 
 static void s_init_from_accel(float ax, float ay, float az)
 {
-	const float n = sqrtf(ax * ax + ay * ay + az * az);
-	if (n < 1e-3f)
+	im_vec3 measured_up = {ax, ay, az};
+	if (!im_vec3_normalize(&measured_up))
 	{
 		return;
 	}
-	ax /= n; ay /= n; az /= n;
-	// Body-to-world rotation taking measured up to world +Z: q = (1 + az, ay, -ax, 0)
-	float w = 1.0f + az;
-	float x = ay, y = -ax;
-	const float qn = sqrtf(w * w + x * x + y * y);
-	if (qn < 1e-6f)
-	{
-		w = 0.0f; x = 1.0f; y = 0.0f; // upside down
-	}
-	else
-	{
-		w /= qn; x /= qn; y /= qn;
-	}
-	s_q0 = w; s_q1 = x; s_q2 = y; s_q3 = 0.0f;
+	const im_vec3 world_up = {0.0f, 0.0f, 1.0f};
+	s_orientation = im_quat_from_unit_vectors(measured_up, world_up);
 	s_q_init = true;
 }
 
-static void s_get_up_in_body(float *ux, float *uy, float *uz)
+static im_vec3 s_get_up_in_body(void)
 {
-	*ux = 2.0f * (s_q1 * s_q3 - s_q0 * s_q2);
-	*uy = 2.0f * (s_q0 * s_q1 + s_q2 * s_q3);
-	*uz = s_q0 * s_q0 - s_q1 * s_q1 - s_q2 * s_q2 + s_q3 * s_q3;
+	const im_vec3 world_up = {0.0f, 0.0f, 1.0f};
+	return im_quat_rotate_inverse(s_orientation, world_up);
 }
 
 // Gyro in rad/s (bias removed), accel in m/s^2, elapsed time in seconds
 static void s_update_orientation(float gx, float gy, float gz, float ax, float ay, float az, float a_norm, float dt_s)
 {
+	im_vec3 gyro_rate = {gx, gy, gz};
 	if (fabsf(a_norm - GRAVITY) < ACCEL_TRUST_TOL)
 	{
-		// Estimated up direction in the body frame
-		float vx, vy, vz;
-		s_get_up_in_body(&vx, &vy, &vz);
-		ax /= a_norm; ay /= a_norm; az /= a_norm;
-		gx += FUSION_KP * (ay * vz - az * vy);
-		gy += FUSION_KP * (az * vx - ax * vz);
-		gz += FUSION_KP * (ax * vy - ay * vx);
+		im_vec3 measured_up = {ax, ay, az};
+		im_vec3_normalize(&measured_up);
+		const im_vec3 estimated_up = s_get_up_in_body();
+		const im_vec3 error = im_vec3_cross(measured_up, estimated_up);
+		gyro_rate = im_vec3_add(gyro_rate, im_vec3_scale(error, FUSION_KP));
 	}
 	const float h = 0.5f * dt_s;
-	const float q0 = s_q0, q1 = s_q1, q2 = s_q2, q3 = s_q3;
-	s_q0 += h * (-q1 * gx - q2 * gy - q3 * gz);
-	s_q1 += h * (q0 * gx + q2 * gz - q3 * gy);
-	s_q2 += h * (q0 * gy - q1 * gz + q3 * gx);
-	s_q3 += h * (q0 * gz + q1 * gy - q2 * gx);
-	const float n = 1.0f / sqrtf(s_q0 * s_q0 + s_q1 * s_q1 + s_q2 * s_q2 + s_q3 * s_q3);
-	s_q0 *= n; s_q1 *= n; s_q2 *= n; s_q3 *= n;
+	const im_quat angular_rate = {0.0f, gyro_rate.x, gyro_rate.y, gyro_rate.z};
+	const im_quat derivative = im_quat_multiply(s_orientation, angular_rate);
+	s_orientation = im_quat_add(s_orientation, im_quat_scale(derivative, h));
+	if (!im_quat_normalize(&s_orientation))
+	{
+		s_orientation = im_quat_identity();
+	}
+}
+
+static void s_update_calibration(float gx, float gy, float gz)
+{
+	/* This variation-only check can mistake steady rotation for gyro bias. */
+#ifndef CONFIG_IM_IMU_SKIP_CALIBRATION_MOTION_CHECK
+	if (s_cal_count > 0)
+	{
+		const float inv = 1.0f / s_cal_count;
+		if (fabsf(gx - s_cal_sum[0] * inv) > CAL_MOTION_RAD_S || fabsf(gy - s_cal_sum[1] * inv) > CAL_MOTION_RAD_S ||
+		    fabsf(gz - s_cal_sum[2] * inv) > CAL_MOTION_RAD_S)
+		{
+			s_cal_count = 0;
+			s_cal_sum[0] = s_cal_sum[1] = s_cal_sum[2] = 0.0f;
+		}
+	}
+#endif
+	s_cal_sum[0] += gx;
+	s_cal_sum[1] += gy;
+	s_cal_sum[2] += gz;
+	if (++s_cal_count >= CAL_SAMPLES)
+	{
+		for (int i = 0; i < 3; i++)
+		{
+			s_bias[i] = s_cal_sum[i] / s_cal_count;
+		}
+		s_cal_done = true;
+		printk("IMU fusion calibration complete\n");
+	}
 }
 
 bool im_fusion_update(float gx, float gy, float gz, float ax, float ay, float az, float dt_s, struct im_fusion_rates *out)
@@ -158,31 +171,7 @@ bool im_fusion_update(float gx, float gy, float gz, float ax, float ay, float az
 	// Initial bias calibration: device must lie still for CAL_SAMPLES
 	if (!s_cal_done)
 	{
-		/* This variation-only check can mistake steady rotation for gyro bias. */
-#ifndef CONFIG_IM_IMU_SKIP_CALIBRATION_MOTION_CHECK
-		if (s_cal_count > 0)
-		{
-			const float inv = 1.0f / s_cal_count;
-			if (fabsf(gx - s_cal_sum[0] * inv) > CAL_MOTION_RAD_S || fabsf(gy - s_cal_sum[1] * inv) > CAL_MOTION_RAD_S ||
-			    fabsf(gz - s_cal_sum[2] * inv) > CAL_MOTION_RAD_S)
-			{
-				s_cal_count = 0;
-				s_cal_sum[0] = s_cal_sum[1] = s_cal_sum[2] = 0.0f;
-			}
-		}
-#endif
-		s_cal_sum[0] += gx;
-		s_cal_sum[1] += gy;
-		s_cal_sum[2] += gz;
-		if (++s_cal_count >= CAL_SAMPLES)
-		{
-			for (int i = 0; i < 3; i++)
-			{
-				s_bias[i] = s_cal_sum[i] / s_cal_count;
-			}
-			s_cal_done = true;
-			printk("IMU fusion calibration complete\n");
-		}
+		s_update_calibration(gx, gy, gz);
 		return false;
 	}
 
@@ -211,17 +200,16 @@ bool im_fusion_update(float gx, float gy, float gz, float ax, float ay, float az
 	s_update_orientation(cx, cy, cz, ax, ay, az, a_norm, dt_s);
 
 	// Rates about gravity (yaw) and about the horizontal part of body Y (pitch): independent of roll
-	float ux, uy, uz;
-	s_get_up_in_body(&ux, &uy, &uz);
-	float yaw_rate = cx * ux + cy * uy + cz * uz;
-	const float px = -uy * ux;
-	const float py = 1.0f - uy * uy;
-	const float pz = -uy * uz;
-	const float pn = sqrtf(px * px + py * py + pz * pz);
+	const im_vec3 gyro_rate = {cx, cy, cz};
+	const im_vec3 up_in_body = s_get_up_in_body();
+	float yaw_rate = im_vec3_dot(gyro_rate, up_in_body);
+	const im_vec3 body_y = {0.0f, 1.0f, 0.0f};
+	const im_vec3 pitch_axis = im_vec3_subtract(body_y, im_vec3_scale(up_in_body, im_vec3_dot(body_y, up_in_body)));
+	const float pitch_norm = im_vec3_length(pitch_axis);
 	float pitch_rate = cy;
-	if (pn > 0.2f) // near vertical the axis is ill-defined; fall back to raw Y
+	if (pitch_norm > 0.2f) // near vertical the axis is ill-defined; fall back to raw Y
 	{
-		pitch_rate = (cx * px + cy * py + cz * pz) / pn;
+		pitch_rate = im_vec3_dot(gyro_rate, im_vec3_scale(pitch_axis, 1.0f / pitch_norm));
 	}
 	if (settled && fabsf(yaw_rate) < STILL_DEADZONE_RAD_S)
 	{
@@ -233,10 +221,10 @@ bool im_fusion_update(float gx, float gy, float gz, float ax, float ay, float az
 	}
 	out->yaw = yaw_rate;
 	out->pitch = pitch_rate;
-	out->qw = s_q0;
-	out->qx = s_q1;
-	out->qy = s_q2;
-	out->qz = s_q3;
+	out->qw = s_orientation.w;
+	out->qx = s_orientation.x;
+	out->qy = s_orientation.y;
+	out->qz = s_orientation.z;
 	out->gx = cx;
 	out->gy = cy;
 	out->gz = cz;
