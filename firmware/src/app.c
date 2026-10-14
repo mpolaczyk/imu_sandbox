@@ -76,7 +76,7 @@ void im_app_on_button(bool pressed)
 #endif
 }
 
-void im_app_on_imu_sample(float gx, float gy, float gz, float ax, float ay, float az, float dt_s)
+void im_app_on_imu_sample(im_vec3 gyro_rate, im_vec3 acceleration, float dt_s)
 {
 	enum im_app_state state = im_state_get();
 	if (state != IM_APP_STATE_CALIBRATING && state != IM_APP_STATE_RUNNING)
@@ -85,7 +85,7 @@ void im_app_on_imu_sample(float gx, float gy, float gz, float ax, float ay, floa
 	}
 
 	struct im_fusion_rates rates;
-	const bool fusion_valid = im_fusion_update(gx, gy, gz, ax, ay, az, dt_s, &rates);
+	const bool fusion_valid = im_fusion_update(gyro_rate, acceleration, dt_s, &rates);
 	if (!fusion_valid)
 	{
 		return;
@@ -108,6 +108,6 @@ void im_app_on_imu_sample(float gx, float gy, float gz, float ax, float ay, floa
 		im_hids_mouse_move(dx, dy);
 	}
 #elif defined(CONFIG_IM_BLE_DEVICE_GATT)
-	im_ble_gatt_push_frame(rates.qw, rates.qx, rates.qy, rates.qz, rates.gx, rates.gy, rates.gz);
+	im_ble_gatt_push_frame(rates.orientation, rates.gyro_rate);
 #endif
 }

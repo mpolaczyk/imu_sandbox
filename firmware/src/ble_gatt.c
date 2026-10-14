@@ -55,7 +55,9 @@ static void s_update_streaming(void)
 // Diagnostics, printed once per second
 static uint32_t s_stat_ok, s_stat_err, s_stat_max_us, s_stat_dropped, s_stat_gated;
 static int s_stat_last_err;
+#if CONFIG_IM_BLE_GATT_PRINT_PERIODIC_STATS
 static int64_t s_stat_next_ms;
+#endif
 
 // Service definition
 // UUIDs match simulator/src/ble/ble-client.ts and docs/ble.md.
@@ -287,7 +289,7 @@ bool im_ble_gatt_start(void)
 	return true;
 }
 
-bool im_ble_gatt_push_frame(float qw, float qx, float qy, float qz, float gx_rad_s, float gy_rad_s, float gz_rad_s)
+bool im_ble_gatt_push_frame(im_quat orientation, im_vec3 gyro_rate)
 {
 	// Gate poses to honor the agreed interval
 	const uint16_t interval = s_connection_interval;
@@ -302,14 +304,14 @@ bool im_ble_gatt_push_frame(float qw, float qx, float qy, float qz, float gx_rad
 	uint8_t frame[BLE_POSE_FRAME_SIZE] = {0};
 	sys_put_le16(s_frame_sequence++, &frame[0]);
 	sys_put_le32(0, &frame[2]);	// TODO remove
-	sys_put_le16(s_clamp_i16(qw * 16384.0f), &frame[6]);
-	sys_put_le16(s_clamp_i16(qx * 16384.0f), &frame[8]);
-	sys_put_le16(s_clamp_i16(qy * 16384.0f), &frame[10]);
-	sys_put_le16(s_clamp_i16(qz * 16384.0f), &frame[12]);
+	sys_put_le16(s_clamp_i16(orientation.w * 16384.0f), &frame[6]);
+	sys_put_le16(s_clamp_i16(orientation.x * 16384.0f), &frame[8]);
+	sys_put_le16(s_clamp_i16(orientation.y * 16384.0f), &frame[10]);
+	sys_put_le16(s_clamp_i16(orientation.z * 16384.0f), &frame[12]);
 	// Gyro is rad/s internally; the wire unit is 0.01 degree/s.
-	sys_put_le16(s_clamp_i16(gx_rad_s * 5729.57795f), &frame[14]);
-	sys_put_le16(s_clamp_i16(gy_rad_s * 5729.57795f), &frame[16]);
-	sys_put_le16(s_clamp_i16(gz_rad_s * 5729.57795f), &frame[18]);
+	sys_put_le16(s_clamp_i16(gyro_rate.x * 5729.57795f), &frame[14]);
+	sys_put_le16(s_clamp_i16(gyro_rate.y * 5729.57795f), &frame[16]);
+	sys_put_le16(s_clamp_i16(gyro_rate.z * 5729.57795f), &frame[18]);
 
 	// Signal the thread but only if it processed previous frame
 	// Otherwise, update the pending frame - last frame will be sent

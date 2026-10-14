@@ -69,31 +69,26 @@
 
 static bool s_cal_done;
 static uint32_t s_cal_count;
-static float s_cal_sum[3];
+static im_vec3 s_cal_sum;
 // Orientation (body to world), gravity-referenced; yaw is gyro-only
 static im_quat s_orientation = {1.0f, 0.0f, 0.0f, 0.0f};
 static bool s_q_init;
-static float s_bias[3];
+static im_vec3 s_bias;
 static uint32_t s_still_count;
 
 void im_fusion_reset(void)
 {
 	s_cal_done = false;
 	s_cal_count = 0;
-	s_cal_sum[0] = 0.0f;
-	s_cal_sum[1] = 0.0f;
-	s_cal_sum[2] = 0.0f;
+	s_cal_sum = (im_vec3){0.0f, 0.0f, 0.0f};
 	s_orientation = im_quat_identity();
 	s_q_init = false;
-	s_bias[0] = 0.0f;
-	s_bias[1] = 0.0f;
-	s_bias[2] = 0.0f;
+	s_bias = (im_vec3){0.0f, 0.0f, 0.0f};
 	s_still_count = 0;
 }
 
-static void s_init_from_accel(float ax, float ay, float az)
+static void s_init_from_accel(im_vec3 measured_up)
 {
-	im_vec3 measured_up = {ax, ay, az};
 	if (!im_vec3_normalize(&measured_up))
 	{
 		return;
@@ -110,12 +105,11 @@ static im_vec3 s_get_up_in_body(void)
 }
 
 // Gyro in rad/s (bias removed), accel in m/s^2, elapsed time in seconds
-static void s_update_orientation(float gx, float gy, float gz, float ax, float ay, float az, float a_norm, float dt_s)
+static void s_update_orientation(im_vec3 gyro_rate, im_vec3 acceleration, float a_norm, float dt_s)
 {
-	im_vec3 gyro_rate = {gx, gy, gz};
 	if (fabsf(a_norm - GRAVITY) < ACCEL_TRUST_TOL)
 	{
-		im_vec3 measured_up = {ax, ay, az};
+		im_vec3 measured_up = acceleration;
 		im_vec3_normalize(&measured_up);
 		const im_vec3 estimated_up = s_get_up_in_body();
 		const im_vec3 error = im_vec3_cross(measured_up, estimated_up);
@@ -131,58 +125,52 @@ static void s_update_orientation(float gx, float gy, float gz, float ax, float a
 	}
 }
 
-static void s_update_calibration(float gx, float gy, float gz)
+static void s_update_calibration(im_vec3 gyro_rate)
 {
 	/* This variation-only check can mistake steady rotation for gyro bias. */
 #ifndef CONFIG_IM_IMU_SKIP_CALIBRATION_MOTION_CHECK
 	if (s_cal_count > 0)
 	{
-		const float inv = 1.0f / s_cal_count;
-		if (fabsf(gx - s_cal_sum[0] * inv) > CAL_MOTION_RAD_S 
-			|| fabsf(gy - s_cal_sum[1] * inv) > CAL_MOTION_RAD_S 
-			|| fabsf(gz - s_cal_sum[2] * inv) > CAL_MOTION_RAD_S)
+		const im_vec3 mean = im_vec3_scale(s_cal_sum, 1.0f / s_cal_count);
+		const im_vec3 deviation = im_vec3_subtract(gyro_rate, mean);
+		if (fabsf(deviation.x) > CAL_MOTION_RAD_S
+			|| fabsf(deviation.y) > CAL_MOTION_RAD_S
+			|| fabsf(deviation.z) > CAL_MOTION_RAD_S)
 		{
 			s_cal_count = 0;
-			s_cal_sum[0] = s_cal_sum[1] = s_cal_sum[2] = 0.0f;
+			s_cal_sum = (im_vec3){0.0f, 0.0f, 0.0f};
 		}
 	}
 #endif
-	s_cal_sum[0] += gx;
-	s_cal_sum[1] += gy;
-	s_cal_sum[2] += gz;
+	s_cal_sum = im_vec3_add(s_cal_sum, gyro_rate);
 	if (++s_cal_count >= CAL_SAMPLES)
 	{
-		for (int i = 0; i < 3; i++)
-		{
-			s_bias[i] = s_cal_sum[i] / s_cal_count;
-		}
+		s_bias = im_vec3_scale(s_cal_sum, 1.0f / s_cal_count);
 		s_cal_done = true;
 		printk("IMU fusion calibration complete\n");
 	}
 }
 
-bool im_fusion_update(float gx, float gy, float gz, float ax, float ay, float az, float dt_s, struct im_fusion_rates *out)
+bool im_fusion_update(im_vec3 gyro_rate, im_vec3 acceleration, float dt_s, struct im_fusion_rates *out)
 {
-	const float a_norm = sqrtf(ax * ax + ay * ay + az * az);
+	const float a_norm = im_vec3_length(acceleration);
 	if (!s_q_init)
 	{
-		s_init_from_accel(ax, ay, az);
+		s_init_from_accel(acceleration);
 	}
 
 	// Initial bias calibration: device must lie still for CAL_SAMPLES
 	if (!s_cal_done)
 	{
-		s_update_calibration(gx, gy, gz);
+		s_update_calibration(gyro_rate);
 		return false;
 	}
 
 	// Gyro bias: track the raw gyro while the device is held still
-	const float cx = gx - s_bias[0];
-	const float cy = gy - s_bias[1];
-	const float cz = gz - s_bias[2];
-	const bool still = fabsf(cx) < STILL_GYRO_RAD_S &&
-			   fabsf(cy) < STILL_GYRO_RAD_S &&
-			   fabsf(cz) < STILL_GYRO_RAD_S &&
+	const im_vec3 corrected_rate = im_vec3_subtract(gyro_rate, s_bias);
+	const bool still = fabsf(corrected_rate.x) < STILL_GYRO_RAD_S &&
+			   fabsf(corrected_rate.y) < STILL_GYRO_RAD_S &&
+			   fabsf(corrected_rate.z) < STILL_GYRO_RAD_S &&
 			   fabsf(a_norm - GRAVITY) < STILL_ACCEL_TOL;
 	s_still_count = still ? s_still_count + 1 : 0;
 	const bool settled = s_still_count >= STILL_SAMPLES;
@@ -193,24 +181,21 @@ bool im_fusion_update(float gx, float gy, float gz, float ax, float ay, float az
 		{
 			bias_alpha = 1.0f;
 		}
-		s_bias[0] += bias_alpha * (gx - s_bias[0]);
-		s_bias[1] += bias_alpha * (gy - s_bias[1]);
-		s_bias[2] += bias_alpha * (gz - s_bias[2]);
+		s_bias = im_vec3_add(s_bias, im_vec3_scale(im_vec3_subtract(gyro_rate, s_bias), bias_alpha));
 	}
 
-	s_update_orientation(cx, cy, cz, ax, ay, az, a_norm, dt_s);
+	s_update_orientation(corrected_rate, acceleration, a_norm, dt_s);
 
 	// Rates about gravity (yaw) and about the horizontal part of body Y (pitch): independent of roll
-	const im_vec3 gyro_rate = {cx, cy, cz};
 	const im_vec3 up_in_body = s_get_up_in_body();
-	float yaw_rate = im_vec3_dot(gyro_rate, up_in_body);
+	float yaw_rate = im_vec3_dot(corrected_rate, up_in_body);
 	const im_vec3 body_y = {0.0f, 1.0f, 0.0f};
 	const im_vec3 pitch_axis = im_vec3_subtract(body_y, im_vec3_scale(up_in_body, im_vec3_dot(body_y, up_in_body)));
 	const float pitch_norm = im_vec3_length(pitch_axis);
-	float pitch_rate = cy;
+	float pitch_rate = corrected_rate.y;
 	if (pitch_norm > 0.2f) // near vertical the axis is ill-defined; fall back to raw Y
 	{
-		pitch_rate = im_vec3_dot(gyro_rate, im_vec3_scale(pitch_axis, 1.0f / pitch_norm));
+		pitch_rate = im_vec3_dot(corrected_rate, im_vec3_scale(pitch_axis, 1.0f / pitch_norm));
 	}
 	if (settled && fabsf(yaw_rate) < STILL_DEADZONE_RAD_S)
 	{
@@ -222,12 +207,7 @@ bool im_fusion_update(float gx, float gy, float gz, float ax, float ay, float az
 	}
 	out->yaw = yaw_rate;
 	out->pitch = pitch_rate;
-	out->qw = s_orientation.w;
-	out->qx = s_orientation.x;
-	out->qy = s_orientation.y;
-	out->qz = s_orientation.z;
-	out->gx = cx;
-	out->gy = cy;
-	out->gz = cz;
+	out->orientation = s_orientation;
+	out->gyro_rate = corrected_rate;
 	return true;
 }

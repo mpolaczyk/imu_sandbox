@@ -26,10 +26,13 @@ static atomic_t s_streaming_requested;
 #define IMU_READY_TIMEOUT_MS 2000
 #define IMU_READY_POLL_MS 5
 #define IMU_WATCHDOG_MS 50
-static int64_t s_next_report_ms;
-static atomic_t s_data_ready_count; 	// Data-ready interrupts, incremented by the ISR
+
+#if CONFIG_IM_IMU_PRINT_PERIODIC_STATS
 static atomic_t s_sample_count; 		// Successfully collected samples
+static atomic_t s_data_ready_count; 	// Data-ready interrupts, incremented by the ISR
+static int64_t s_next_report_ms;
 static atomic_t s_not_acquired_count; 	// Semaphore timeouts, when samples don't arrive
+#endif
 
 // Measurement data
 static struct sensor_value s_accel[3];
@@ -63,7 +66,9 @@ static void s_imu_data_ready_handler(const struct device *dev, const struct sens
 {
 	ARG_UNUSED(dev);
 	ARG_UNUSED(trig);
+#if CONFIG_IM_IMU_PRINT_PERIODIC_STATS
 	atomic_inc(&s_data_ready_count);
+#endif
 	k_sem_give(&s_imu_data_ready);
 }
 
@@ -86,12 +91,20 @@ bool s_imu_collect()
 	s_sample_time_valid = true;
 	sensor_channel_get(s_imu, SENSOR_CHAN_ACCEL_XYZ, s_accel);
 	sensor_channel_get(s_imu, SENSOR_CHAN_GYRO_XYZ, s_gyro);
+	const im_vec3 gyro_rate = {
+		sensor_value_to_float(&s_gyro[0]),
+		sensor_value_to_float(&s_gyro[1]),
+		sensor_value_to_float(&s_gyro[2]),
+	};
+	const im_vec3 acceleration = {
+		sensor_value_to_float(&s_accel[0]),
+		sensor_value_to_float(&s_accel[1]),
+		sensor_value_to_float(&s_accel[2]),
+	};
 	// Notify callback
 	if (s_sample_cb)
 	{
-		s_sample_cb(sensor_value_to_float(&s_gyro[0]), sensor_value_to_float(&s_gyro[1]),
-			    sensor_value_to_float(&s_gyro[2]), sensor_value_to_float(&s_accel[0]),
-			    sensor_value_to_float(&s_accel[1]), sensor_value_to_float(&s_accel[2]), dt_s);
+		s_sample_cb(gyro_rate, acceleration, dt_s);
 	}
 #if CONFIG_IM_IMU_PRINT_SAMPLE
 	char out_str[64];
@@ -131,8 +144,9 @@ static void s_imu_thread_fn(void *p1, void *p2, void *p3)
 			im_fusion_reset();
 			continue;
 		}
-
+#if CONFIG_IM_IMU_PRINT_PERIODIC_STATS
 		const bool acquired = k_sem_take(&s_imu_data_ready, K_MSEC(IMU_WATCHDOG_MS)) == 0;
+#endif
 		if (!atomic_get(&s_streaming_requested))
 		{
 			// Stop before collecting another sample.
@@ -146,11 +160,13 @@ static void s_imu_thread_fn(void *p1, void *p2, void *p3)
 			continue;
 		}
 
+#if CONFIG_IM_IMU_PRINT_PERIODIC_STATS
 		if (!acquired)
 		{
 			// The watchdog read can recover a sample if the interrupt edge was missed.
 			atomic_inc(&s_not_acquired_count);
 		}
+#endif
 		if (!s_imu_collect())
 		{
 			if (s_error_cb) s_error_cb();

@@ -2,9 +2,10 @@
 #define IM_IMU_H
 
 #include <stdbool.h>
+#include "math3d.h"
 
 /* Called with gyro rates in rad/s, acceleration in m/s^2, and elapsed time in seconds. */
-typedef void (*im_imu_sample_cb_t)(float gx, float gy, float gz, float ax, float ay, float az, float dt_s);
+typedef void (*im_imu_sample_cb_t)(im_vec3 gyro_rate, im_vec3 acceleration, float dt_s);
 typedef void (*im_imu_error_cb_t)(void);
 
 void im_imu_set_sample_cb(im_imu_sample_cb_t cb);
