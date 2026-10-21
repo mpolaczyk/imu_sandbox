@@ -1,18 +1,18 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { useMemo } from 'react'
-import { Quaternion, Vector3 } from 'three'
+import { useMemo, useRef } from 'react'
+import { BackSide, type DirectionalLight, type Quaternion } from 'three'
 import { eyePosition, offAxisProjection } from '../math/headCamera'
 import type { Screen } from '../math/headPointer'
 
 type HeadCameraViewProps = {
   orientation: Quaternion
   screen: Screen
-  translation?: Vector3
 }
 
-function HeadCamera({ orientation, screen, translation }: HeadCameraViewProps) {
+function HeadCamera({ orientation, screen }: HeadCameraViewProps) {
   const camera = useThree((state) => state.camera)
-  const eye = useMemo(() => eyePosition(orientation, translation), [orientation, translation])
+  const eye = useMemo(() => eyePosition(orientation), [orientation])
+  const headlight = useRef<DirectionalLight>(null)
 
   useFrame(() => {
     const projection = offAxisProjection(eye, screen)
@@ -24,49 +24,125 @@ function HeadCamera({ orientation, screen, translation }: HeadCameraViewProps) {
     camera.updateMatrixWorld(true)
     camera.projectionMatrix.copy(projection)
     camera.projectionMatrixInverse.copy(projection).invert()
+
+    const light = headlight.current
+    if (light) {
+      light.position.copy(eye)
+      light.target.position.set(eye.x, eye.y, eye.z - 1)
+      light.target.updateMatrixWorld()
+    }
   })
 
-  return null
+  return (
+    <directionalLight
+      ref={headlight}
+      intensity={0.9}
+      castShadow
+      shadow-mapSize={[2048, 2048]}
+      shadow-camera-left={-0.4}
+      shadow-camera-right={0.4}
+      shadow-camera-top={0.4}
+      shadow-camera-bottom={-0.4}
+      shadow-camera-near={0.01}
+      shadow-camera-far={1.5}
+      shadow-bias={-0.0002}
+      shadow-normalBias={0.002}
+      shadow-radius={4}
+    />
+  )
 }
 
-const BOXES: Array<{ position: [number, number, number]; size: number; color: string }> = [
-  { position: [-0.12, -0.05, -0.45], size: 0.08, color: '#f97316' },
-  { position: [0.1, 0.02, -0.7], size: 0.12, color: '#22d3ee' },
-  { position: [0, -0.06, -0.95], size: 0.16, color: '#a78bfa' },
-  { position: [0.2, 0.05, -0.5], size: 0.05, color: '#facc15' },
-  { position: [-0.22, 0.04, -0.85], size: 0.1, color: '#4ade80' },
-  { position: [0.02, 0.05, -0.3], size: 0.04, color: '#fb7185' },
+const ROOM_DEPTH_M = 0.5
+const WALL_WHITE = '#9ca3af'
+// BoxGeometry face order: +x, -x, +y, -y, +z, -z. The +z face (towards the viewer) is culled, leaving the screen as an opening.
+const WALL_COLORS = ['#22c55e', '#ef4444', WALL_WHITE, WALL_WHITE, WALL_WHITE, WALL_WHITE]
+
+type Shape =
+  | { kind: 'sphere'; radius: number }
+  | { kind: 'cone'; radius: number; height: number }
+  | { kind: 'cylinder'; radius: number; height: number }
+  | { kind: 'torusKnot'; radius: number; tube: number }
+  | { kind: 'box'; width: number; height: number; depth: number }
+
+type RoomObject = {
+  x: number
+  z: number
+  /** Centre height above the floor. */
+  lift: number
+  rotY: number
+  color: string
+  shape: Shape
+}
+
+// x/z are relative to the room centre.
+const ROOM_OBJECTS: RoomObject[] = [
+  { x: -0.17, z: -0.1, lift: 0.08, rotY: 0, color: '#f97316', shape: { kind: 'cone', radius: 0.06, height: 0.16 } },
+  { x: 0.0, z: -0.14, lift: 0.055, rotY: 0, color: '#eab308', shape: { kind: 'cylinder', radius: 0.045, height: 0.11 } },
+  { x: 0.15, z: -0.02, lift: 0.07, rotY: 0, color: '#3b82f6', shape: { kind: 'sphere', radius: 0.07 } },
+  { x: -0.05, z: 0.06, lift: 0.07, rotY: 0.5, color: '#a855f7', shape: { kind: 'torusKnot', radius: 0.04, tube: 0.013 } },
+  { x: 0.1, z: 0.12, lift: 0.03, rotY: -0.4, color: '#14b8a6', shape: { kind: 'box', width: 0.08, height: 0.06, depth: 0.08 } },
 ]
 
+function ShapeGeometry({ shape }: { shape: Shape }) {
+  switch (shape.kind) {
+    case 'sphere':
+      return <sphereGeometry args={[shape.radius, 48, 32]} />
+    case 'cone':
+      return <coneGeometry args={[shape.radius, shape.height, 48]} />
+    case 'cylinder':
+      return <cylinderGeometry args={[shape.radius, shape.radius, shape.height, 48]} />
+    case 'torusKnot':
+      return <torusKnotGeometry args={[shape.radius, shape.tube, 160, 24]} />
+    case 'box':
+      return <boxGeometry args={[shape.width, shape.height, shape.depth]} />
+  }
+}
+
 function World({ screen }: { screen: Screen }) {
-  const frameZ = screen.center.z
+  const { widthM: w, heightM: h, center } = screen
+  const d = ROOM_DEPTH_M
+  const roomZ = center.z - d / 2
+  const floorY = center.y - h / 2
   return (
     <>
       <color attach="background" args={['#020617']} />
-      <ambientLight intensity={0.8} />
-      <directionalLight position={[1, 2, 1]} intensity={1.2} />
-      <gridHelper args={[3, 30, '#1d4ed8', '#1f2937']} position={[0, -screen.heightM / 2, -1]} />
-      <mesh position={[0, 0, frameZ]}>
-        <planeGeometry args={[screen.widthM, screen.heightM]} />
-        <meshBasicMaterial color="#38bdf8" wireframe />
+      <ambientLight intensity={0.2} />
+      <mesh position={[center.x, center.y, roomZ]} receiveShadow>
+        <boxGeometry args={[w, h, d]} />
+        {WALL_COLORS.map((color, index) => (
+          <meshPhongMaterial
+            key={index}
+            attach={`material-${index}`}
+            color={color}
+            specular="#222222"
+            shininess={16}
+            side={BackSide}
+          />
+        ))}
       </mesh>
-      {BOXES.map((box) => (
-        <mesh key={box.color} position={box.position}>
-          <boxGeometry args={[box.size, box.size, box.size]} />
-          <meshStandardMaterial color={box.color} />
+      {ROOM_OBJECTS.map((object, index) => (
+        <mesh
+          key={index}
+          position={[center.x + object.x, floorY + object.lift, roomZ + object.z]}
+          rotation={[0, object.rotY, 0]}
+          castShadow
+          receiveShadow
+        >
+          <ShapeGeometry shape={object.shape} />
+          <meshPhongMaterial color={object.color} specular="#aaaaaa" shininess={64} />
         </mesh>
       ))}
     </>
   )
 }
 
-export function HeadCameraView({ orientation, screen, translation }: HeadCameraViewProps) {
+export function HeadCameraView({ orientation, screen }: HeadCameraViewProps) {
   const aspect = screen.widthM / screen.heightM
   return (
     <section className="preview-card">
       <div className="screen-preview" style={{ aspectRatio: String(aspect) }}>
-        <Canvas camera={{ manual: true, position: [0, 0, 0] }}>
-          <HeadCamera orientation={orientation} screen={screen} translation={translation} />
+        <Canvas shadows="soft" camera={{ manual: true, position: [0, 0, 0] }}>
+          <HeadCamera orientation={orientation} screen={screen} />
           <World screen={screen} />
         </Canvas>
       </div>

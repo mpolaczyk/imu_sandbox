@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Quaternion, Vector3 } from 'three'
+import { useEffect, useMemo, useState } from 'react'
+import { Quaternion } from 'three'
 import './App.css'
 import { createScreen } from './math/headPointer'
-import { PositionTracker } from './math/positionTracker'
-import { relativeImuOrientation, relativeImuTranslation } from './math/orientation'
+import { relativeImuOrientation } from './math/orientation'
 import { BlePoseClient, type PosePacket, type PoseStats } from './ble/ble-client'
 import { BleControls } from './ui/BleControls'
 import { ControlPanel } from './ui/ControlPanel'
@@ -23,46 +22,24 @@ function App() {
   const [distanceM, setDistanceM] = useState(DEFAULT_DISTANCE_M)
   const [livePose, setLivePose] = useState<PosePacket | null>(null)
   const [liveReference, setLiveReference] = useState<Quaternion | null>(null)
-  const tracker = useMemo(() => new PositionTracker(), [])
-  const lastTimestampMs = useRef<number | null>(null)
-  const trackerReference = useRef<Quaternion | null>(null)
-  const [livePosition, setLivePosition] = useState<Vector3 | null>(null)
   const [bleConnected, setBleConnected] = useState(false)
   const [bleStats, setBleStats] = useState(DEFAULT_POSE_STATS)
   const [bleError, setBleError] = useState('')
-
-  const resetTracking = useCallback(() => {
-    tracker.reset()
-    lastTimestampMs.current = null
-    trackerReference.current = null
-    setLivePosition(null)
-  }, [tracker])
 
   useEffect(() => {
     const unsubscribePose = client.onPose((pose, stats) => {
       setLivePose(pose)
       const receivedOrientation = poseQuaternion(pose)
       setLiveReference((reference) => reference ?? receivedOrientation)
-      trackerReference.current ??= receivedOrientation
-      const previous = lastTimestampMs.current
-      lastTimestampMs.current = pose.timestampMs
-      const rawDt = previous === null ? 0 : ((pose.timestampMs - previous) >>> 0) / 1000
-      const dtS = rawDt > 0 && rawDt <= 0.1 ? rawDt : 0.02
-      const world = tracker.update(receivedOrientation, new Vector3(...pose.accelMps2), dtS)
-      setLivePosition(
-        tracker.ready ? relativeImuTranslation(world, trackerReference.current) : null,
-      )
       setBleStats(stats)
     })
     const unsubscribeConnect = client.onConnect(() => {
       setBleConnected(true)
       setLivePose(null)
       setLiveReference(null)
-      resetTracking()
       setBleError('')
     })
     const unsubscribeDisconnect = client.onDisconnect(() => {
-      resetTracking()
       setBleConnected(false)
       setLivePose(null)
       setLiveReference(null)
@@ -75,7 +52,7 @@ function App() {
       unsubscribeError()
       client.disconnect()
     }
-  }, [client, tracker, resetTracking])
+  }, [client])
 
   const liveOrientation = useMemo(() => {
     if (!livePose || !liveReference) {
@@ -89,18 +66,12 @@ function App() {
   const handleCalibrate = () => {
     if (livePose) {
       setLiveReference(poseQuaternion(livePose))
-      tracker.reset()
-      trackerReference.current = poseQuaternion(livePose)
-      setLivePosition(null)
     }
   }
 
   const handleReset = () => {
     setDistanceM(DEFAULT_DISTANCE_M)
     setLiveReference(livePose ? poseQuaternion(livePose) : null)
-    tracker.reset()
-    trackerReference.current = livePose ? poseQuaternion(livePose) : null
-    setLivePosition(null)
   }
 
   return (
@@ -128,11 +99,7 @@ function App() {
         </div>
       </section>
 
-      <HeadCameraView
-        orientation={orientation}
-        screen={screen}
-        translation={livePosition ?? undefined}
-      />
+      <HeadCameraView orientation={orientation} screen={screen} />
     </main>
   )
 }

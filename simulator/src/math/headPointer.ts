@@ -24,9 +24,9 @@ export function createScreen(options?: {
   widthM?: number
   heightM?: number
 }): Screen {
-  const distanceM = options?.distanceM ?? 0.6
-  const widthM = options?.widthM ?? 0.531
-  const heightM = options?.heightM ?? 0.299
+  const distanceM = options?.distanceM ?? 0.55
+  const widthM = options?.widthM ?? 0.35
+  const heightM = options?.heightM ?? 0.22
 
   return {
     center: new Vector3(0, 0, -distanceM),
