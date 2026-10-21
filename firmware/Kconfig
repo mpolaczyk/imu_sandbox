@@ -31,7 +31,7 @@ config IM_IMU_SAMPLE_RATE_HZ
 
 config IM_IMU_SKIP_CALIBRATION_MOTION_CHECK
 	bool "Debug: accept motion during startup gyro calibration"
-	default y
+		default n
 	help
 	  Development only. Calibration completes after a fixed sample count even if
 	  the device moves (e.g. on a train); expect gyro bias drift.

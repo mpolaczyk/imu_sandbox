@@ -144,9 +144,7 @@ static void s_imu_thread_fn(void *p1, void *p2, void *p3)
 			im_fusion_reset();
 			continue;
 		}
-#if CONFIG_IM_IMU_PRINT_PERIODIC_STATS
 		const bool acquired = k_sem_take(&s_imu_data_ready, K_MSEC(IMU_WATCHDOG_MS)) == 0;
-#endif
 		if (!atomic_get(&s_streaming_requested))
 		{
 			// Stop before collecting another sample.
@@ -160,12 +158,14 @@ static void s_imu_thread_fn(void *p1, void *p2, void *p3)
 			continue;
 		}
 
+		// The watchdog read can recover a sample if the interrupt edge was missed.
 #if CONFIG_IM_IMU_PRINT_PERIODIC_STATS
 		if (!acquired)
 		{
-			// The watchdog read can recover a sample if the interrupt edge was missed.
 			atomic_inc(&s_not_acquired_count);
 		}
+#else
+		ARG_UNUSED(acquired);
 #endif
 		if (!s_imu_collect())
 		{
