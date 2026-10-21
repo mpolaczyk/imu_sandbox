@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <math.h>
 #include <zephyr/kernel.h>
 
 #include "state.h"
@@ -15,6 +16,7 @@ static uint8_t s_sens_idx = 2;
 // Mounting-dependent: yaw (gyro Z) -> X, pitch (gyro Y) -> Y; roll (gyro X) is ignored
 #define MOUSE_X_SIGN (-1.0f)
 #define MOUSE_Y_SIGN (-1.0f) // Cable to front
+#define MOUSE_DEADZONE_RAD_S 0.03f
 
 // Sub-pixel remainders carried between samples
 static float s_mouse_rem_x;
@@ -97,12 +99,18 @@ void im_app_on_imu_sample(im_vec3 gyro_rate, im_vec3 acceleration, float dt_s)
 
 #if defined(CONFIG_IM_BLE_DEVICE_MOUSE)
 	const float px_per_rad = (float)s_px_per_rad[s_sens_idx];
-	const float fx = s_mouse_rem_x + MOUSE_X_SIGN * rates.yaw * px_per_rad * dt_s;
-	const float fy = s_mouse_rem_y + MOUSE_Y_SIGN * rates.pitch * px_per_rad * dt_s;
+	const bool x_active = fabsf(rates.yaw) >= MOUSE_DEADZONE_RAD_S;
+	const bool y_active = fabsf(rates.pitch) >= MOUSE_DEADZONE_RAD_S;
+	const float fx = x_active
+		? s_mouse_rem_x + MOUSE_X_SIGN * rates.yaw * px_per_rad * dt_s
+		: 0.0f;
+	const float fy = y_active
+		? s_mouse_rem_y + MOUSE_Y_SIGN * rates.pitch * px_per_rad * dt_s
+		: 0.0f;
 	const int16_t dx = (int16_t)fx;
 	const int16_t dy = (int16_t)fy;
-	s_mouse_rem_x = fx - dx;
-	s_mouse_rem_y = fy - dy;
+	s_mouse_rem_x = x_active ? fx - dx : 0.0f;
+	s_mouse_rem_y = y_active ? fy - dy : 0.0f;
 	if (dx || dy)
 	{
 		im_hids_mouse_move(dx, dy);
