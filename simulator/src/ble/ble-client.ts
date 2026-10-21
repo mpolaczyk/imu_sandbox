@@ -4,12 +4,14 @@ export const IMU_POSE_CHARACTERISTIC_UUID = '7e400002-b5a3-f393-e0a9-e50e24ccca9
 export const IMU_INFO_CHARACTERISTIC_UUID = '7e400003-b5a3-f393-e0a9-e50e24ccca9e'
 
 export const POSE_FRAME_SIZE = 20
+const STANDARD_GRAVITY = 9.80665
 
 export type PosePacket = {
   sequence: number
   timestampMs: number
   quaternion: [number, number, number, number]
-  gyroDps: [number, number, number]
+  /** Body-frame specific force (gravity included) in m/s^2. */
+  accelMps2: [number, number, number]
 }
 
 export type PoseStats = {
@@ -63,10 +65,10 @@ export function parsePoseFrame(view: DataView): PosePacket {
     sequence: view.getUint16(0, true),
     timestampMs: view.getUint32(2, true),
     quaternion: quaternion.map((value) => value / magnitude) as [number, number, number, number],
-    gyroDps: [
-      view.getInt16(14, true) / 100,
-      view.getInt16(16, true) / 100,
-      view.getInt16(18, true) / 100,
+    accelMps2: [
+      (view.getInt16(14, true) * STANDARD_GRAVITY) / 1000,
+      (view.getInt16(16, true) * STANDARD_GRAVITY) / 1000,
+      (view.getInt16(18, true) * STANDARD_GRAVITY) / 1000,
     ],
   }
 }

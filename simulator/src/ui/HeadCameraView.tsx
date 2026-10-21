@@ -1,17 +1,18 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { useMemo } from 'react'
-import { Quaternion } from 'three'
+import { Quaternion, Vector3 } from 'three'
 import { eyePosition, offAxisProjection } from '../math/headCamera'
 import type { Screen } from '../math/headPointer'
 
 type HeadCameraViewProps = {
   orientation: Quaternion
   screen: Screen
+  translation?: Vector3
 }
 
-function HeadCamera({ orientation, screen }: HeadCameraViewProps) {
+function HeadCamera({ orientation, screen, translation }: HeadCameraViewProps) {
   const camera = useThree((state) => state.camera)
-  const eye = useMemo(() => eyePosition(orientation), [orientation])
+  const eye = useMemo(() => eyePosition(orientation, translation), [orientation, translation])
 
   useFrame(() => {
     const projection = offAxisProjection(eye, screen)
@@ -59,7 +60,7 @@ function World({ screen }: { screen: Screen }) {
   )
 }
 
-export function HeadCameraView({ orientation, screen }: HeadCameraViewProps) {
+export function HeadCameraView({ orientation, screen, translation }: HeadCameraViewProps) {
   const aspect = screen.widthM / screen.heightM
   return (
     <section className="card preview-card">
@@ -74,7 +75,7 @@ export function HeadCameraView({ orientation, screen }: HeadCameraViewProps) {
       </div>
       <div className="screen-preview" style={{ aspectRatio: String(aspect) }}>
         <Canvas camera={{ manual: true, position: [0, 0, 0] }}>
-          <HeadCamera orientation={orientation} screen={screen} />
+          <HeadCamera orientation={orientation} screen={screen} translation={translation} />
           <World screen={screen} />
         </Canvas>
       </div>

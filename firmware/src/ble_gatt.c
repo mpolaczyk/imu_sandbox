@@ -289,7 +289,7 @@ bool im_ble_gatt_start(void)
 	return true;
 }
 
-bool im_ble_gatt_push_frame(im_quat orientation, im_vec3 gyro_rate)
+bool im_ble_gatt_push_frame(im_quat orientation, im_vec3 acceleration)
 {
 	// Gate poses to honor the agreed interval
 	const uint16_t interval = s_connection_interval;
@@ -303,15 +303,15 @@ bool im_ble_gatt_push_frame(im_quat orientation, im_vec3 gyro_rate)
 	// Build the frame
 	uint8_t frame[BLE_POSE_FRAME_SIZE] = {0};
 	sys_put_le16(s_frame_sequence++, &frame[0]);
-	sys_put_le32(0, &frame[2]);	// TODO remove
+	sys_put_le32(k_uptime_get_32(), &frame[2]);
 	sys_put_le16(s_clamp_i16(orientation.w * 16384.0f), &frame[6]);
 	sys_put_le16(s_clamp_i16(orientation.x * 16384.0f), &frame[8]);
 	sys_put_le16(s_clamp_i16(orientation.y * 16384.0f), &frame[10]);
 	sys_put_le16(s_clamp_i16(orientation.z * 16384.0f), &frame[12]);
-	// Gyro is rad/s internally; the wire unit is 0.01 degree/s.
-	sys_put_le16(s_clamp_i16(gyro_rate.x * 5729.57795f), &frame[14]);
-	sys_put_le16(s_clamp_i16(gyro_rate.y * 5729.57795f), &frame[16]);
-	sys_put_le16(s_clamp_i16(gyro_rate.z * 5729.57795f), &frame[18]);
+	// Acceleration is m/s^2 internally; the wire unit is 1 mg (0.001 g).
+	sys_put_le16(s_clamp_i16(acceleration.x * 101.9716f), &frame[14]);
+	sys_put_le16(s_clamp_i16(acceleration.y * 101.9716f), &frame[16]);
+	sys_put_le16(s_clamp_i16(acceleration.z * 101.9716f), &frame[18]);
 
 	// Signal the thread but only if it processed previous frame
 	// Otherwise, update the pending frame - last frame will be sent

@@ -116,6 +116,6 @@ void im_app_on_imu_sample(im_vec3 gyro_rate, im_vec3 acceleration, float dt_s)
 		im_hids_mouse_move(dx, dy);
 	}
 #elif defined(CONFIG_IM_BLE_DEVICE_GATT)
-	im_ble_gatt_push_frame(rates.orientation, rates.gyro_rate);
+	im_ble_gatt_push_frame(rates.orientation, acceleration);
 #endif
 }

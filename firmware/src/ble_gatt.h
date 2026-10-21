@@ -10,7 +10,8 @@ bool im_ble_gatt_init(void);
 bool im_ble_gatt_start(void);
 void im_ble_gatt_set_session_callback(im_ble_gatt_session_cb_t callback);
 
+// acceleration is body-frame specific force in m/s^2 (gravity included).
 // Returns true when queued; replaces an older pending frame if one has not been sent. */
-bool im_ble_gatt_push_frame(im_quat orientation, im_vec3 gyro_rate);
+bool im_ble_gatt_push_frame(im_quat orientation, im_vec3 acceleration);
 
 #endif

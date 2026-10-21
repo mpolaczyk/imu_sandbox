@@ -27,12 +27,13 @@ little-endian; offsets are from the start of the value.
 | 8 | 2 | `int16` | Quaternion `qx`, Q14 |
 | 10 | 2 | `int16` | Quaternion `qy`, Q14 |
 | 12 | 2 | `int16` | Quaternion `qz`, Q14 |
-| 14 | 2 | `int16` | Gyro X, 0.01 degree/s per count |
-| 16 | 2 | `int16` | Gyro Y, 0.01 degree/s per count |
-| 18 | 2 | `int16` | Gyro Z, 0.01 degree/s per count |
+| 14 | 2 | `int16` | Accel X, body frame, 1 mg (0.001 g) per count |
+| 16 | 2 | `int16` | Accel Y, body frame, 1 mg per count |
+| 18 | 2 | `int16` | Accel Z, body frame, 1 mg per count |
 
-The quaternion is the fusion filter's body-to-world orientation. Gyro values
-are bias-corrected angular velocity. Firmware clamps fixed-point values to the
+The quaternion is the fusion filter's body-to-world orientation. Acceleration is the
+accelerometer's specific force (gravity included), used by the simulator for
+position tracking. The uptime field is `k_uptime_get_32()`. Firmware clamps fixed-point values to the
 `int16` range. The Control/Info value is three bytes: sample rate in Hz (`uint16`
 little-endian) and mode (`0` fused sensor, `1` synthetic).
 The default notification rate is 50 Hz and can be set from 1–100 Hz with

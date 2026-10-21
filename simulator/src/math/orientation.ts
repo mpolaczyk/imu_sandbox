@@ -14,6 +14,11 @@ export function relativeImuOrientation(current: Quaternion, reference: Quaternio
     .normalize()
 }
 
+/** Converts a world-frame sensor displacement to the scene frame, relative to the reference pose. */
+export function relativeImuTranslation(worldDisplacement: Vector3, reference: Quaternion): Vector3 {
+  return worldDisplacement.clone().applyQuaternion(reference.clone().invert()).applyQuaternion(SENSOR_TO_SCENE)
+}
+
 export function headQuaternion(
   yawDeg: number,
   pitchDeg: number,

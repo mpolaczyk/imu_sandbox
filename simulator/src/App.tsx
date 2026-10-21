@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Euler, MathUtils, Quaternion, Vector2, Vector3 } from 'three'
 import './App.css'
 import { ema } from './math/filters'
 import { createScreen, forwardVector, intersectNoseRayWithScreen } from './math/headPointer'
-import { headQuaternion, relativeImuOrientation } from './math/orientation'
+import { PositionTracker } from './math/positionTracker'
+import { headQuaternion, relativeImuOrientation, relativeImuTranslation } from './math/orientation'
 import { BlePoseClient, type PosePacket, type PoseStats } from './ble/ble-client'
 import { SimulatorScene } from './scene/SimulatorScene'
 import { applyCalibration, type Angles } from './simulation/calibration'
@@ -43,24 +44,46 @@ function App() {
   const [smoothedCursor, setSmoothedCursor] = useState(() => DEFAULT_CURSOR.clone())
   const [livePose, setLivePose] = useState<PosePacket | null>(null)
   const [liveReference, setLiveReference] = useState<Quaternion | null>(null)
+  const tracker = useMemo(() => new PositionTracker(), [])
+  const lastTimestampMs = useRef<number | null>(null)
+  const trackerReference = useRef<Quaternion | null>(null)
+  const [livePosition, setLivePosition] = useState<Vector3 | null>(null)
   const [bleConnected, setBleConnected] = useState(false)
   const [bleStats, setBleStats] = useState(DEFAULT_POSE_STATS)
   const [bleError, setBleError] = useState('')
+
+  const resetTracking = useCallback(() => {
+    tracker.reset()
+    lastTimestampMs.current = null
+    trackerReference.current = null
+    setLivePosition(null)
+  }, [tracker])
 
   useEffect(() => {
     const unsubscribePose = client.onPose((pose, stats) => {
       setLivePose(pose)
       const receivedOrientation = poseQuaternion(pose)
       setLiveReference((reference) => reference ?? receivedOrientation)
+      trackerReference.current ??= receivedOrientation
+      const previous = lastTimestampMs.current
+      lastTimestampMs.current = pose.timestampMs
+      const rawDt = previous === null ? 0 : ((pose.timestampMs - previous) >>> 0) / 1000
+      const dtS = rawDt > 0 && rawDt <= 0.1 ? rawDt : 0.02
+      const world = tracker.update(receivedOrientation, new Vector3(...pose.accelMps2), dtS)
+      setLivePosition(
+        tracker.ready ? relativeImuTranslation(world, trackerReference.current) : null,
+      )
       setBleStats(stats)
     })
     const unsubscribeConnect = client.onConnect(() => {
       setBleConnected(true)
       setLivePose(null)
       setLiveReference(null)
+      resetTracking()
       setBleError('')
     })
     const unsubscribeDisconnect = client.onDisconnect(() => {
+      resetTracking()
       setBleConnected(false)
       setLivePose(null)
       setLiveReference(null)
@@ -73,7 +96,7 @@ function App() {
       unsubscribeError()
       client.disconnect()
     }
-  }, [client])
+  }, [client, tracker, resetTracking])
 
   const liveOrientation = useMemo(() => {
     if (!livePose || !liveReference) {
@@ -119,6 +142,9 @@ function App() {
   const handleCalibrate = () => {
     if (livePose) {
       setLiveReference(poseQuaternion(livePose))
+      tracker.reset()
+      trackerReference.current = poseQuaternion(livePose)
+      setLivePosition(null)
     } else {
       setCalibration(angles)
     }
@@ -131,6 +157,9 @@ function App() {
     setSmoothingAlpha(DEFAULT_SMOOTHING_ALPHA)
     setCalibration(DEFAULT_ANGLES)
     setLiveReference(livePose ? poseQuaternion(livePose) : null)
+    tracker.reset()
+    trackerReference.current = livePose ? poseQuaternion(livePose) : null
+    setLivePosition(null)
     setSmoothedCursor(DEFAULT_CURSOR.clone())
   }
 
@@ -183,7 +212,11 @@ function App() {
         </div>
       </section>
 
-      <HeadCameraView orientation={orientation} screen={screen} />
+      <HeadCameraView
+        orientation={orientation}
+        screen={screen}
+        translation={livePosition ?? undefined}
+      />
 
       <ScreenPreview
         rawCursor={rawCursor}

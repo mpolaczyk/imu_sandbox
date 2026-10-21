@@ -17,6 +17,14 @@ describe('eyePosition', () => {
   })
 })
 
+describe('eyePosition translation', () => {
+  it('adds the tracked translation', () => {
+    const eye = eyePosition(new Quaternion(), new Vector3(0.05, 0.02, -0.1))
+    expect(eye.x).toBeCloseTo(0.05, 6)
+    expect(eye.z).toBeCloseTo(-0.1, 6)
+  })
+})
+
 describe('offAxisProjection', () => {
   it('is symmetric when the eye is centred on the screen', () => {
     const m = offAxisProjection(new Vector3(), screen)

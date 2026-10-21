@@ -11,15 +11,15 @@ describe('parsePoseFrame', () => {
     view.setInt16(8, 0, true)
     view.setInt16(10, 16384, true)
     view.setInt16(12, 0, true)
-    view.setInt16(14, -1234, true)
+    view.setInt16(14, -1000, true)
     view.setInt16(16, 250, true)
     view.setInt16(18, 0, true)
 
-    expect(parsePoseFrame(view)).toEqual({
+    expect(parsePoseFrame(view)).toMatchObject({
       sequence: 0x1234,
       timestampMs: 987654,
       quaternion: [0, 0, 1, 0],
-      gyroDps: [-12.34, 2.5, 0],
+      accelMps2: [-9.80665, 2.4516625, 0],
     })
   })
 
