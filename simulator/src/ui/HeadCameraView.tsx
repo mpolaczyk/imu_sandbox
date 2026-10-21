@@ -63,16 +63,7 @@ function World({ screen }: { screen: Screen }) {
 export function HeadCameraView({ orientation, screen, translation }: HeadCameraViewProps) {
   const aspect = screen.widthM / screen.heightM
   return (
-    <section className="card preview-card">
-      <div className="card-header">
-        <div>
-          <h2>Head-coupled view</h2>
-          <p>
-            Virtual camera follows the sensor; the off-axis projection makes the screen act as a
-            window into the scene.
-          </p>
-        </div>
-      </div>
+    <section className="preview-card">
       <div className="screen-preview" style={{ aspectRatio: String(aspect) }}>
         <Canvas camera={{ manual: true, position: [0, 0, 0] }}>
           <HeadCamera orientation={orientation} screen={screen} translation={translation} />

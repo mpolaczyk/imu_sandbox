@@ -18,7 +18,7 @@ export function BleControls({
   onDisconnect,
 }: BleControlsProps) {
   return (
-    <section className="card panel-card">
+    <section className="panel-card">
       <div className="card-header">
         <div>
           <h2>BLE pose input</h2>
