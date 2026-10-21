@@ -13,7 +13,7 @@ endchoice
 
 choice IM_BUTTON_MODE
 	prompt "Button 1 function"
-	default IM_BUTTON_MODE_CLICK
+	default IM_BUTTON_MODE_SENSITIVITY
 	help
 	  What button 1 does once the passkey pairing is not pending.
 config IM_BUTTON_MODE_CLICK

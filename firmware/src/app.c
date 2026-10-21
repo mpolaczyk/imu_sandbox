@@ -10,7 +10,7 @@
 #include "hids_mouse.h"
 
 // Integers on purpose: level 2 (2500) is the default
-static const int s_px_per_rad[] = {1500, 2000, 2500, 3000, 3500, 4000};
+static const int s_px_per_rad[] = {1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000};
 static uint8_t s_sens_idx = 2;
 // Mounting-dependent: yaw (gyro Z) -> X, pitch (gyro Y) -> Y; roll (gyro X) is ignored
 #define MOUSE_X_SIGN (-1.0f)
