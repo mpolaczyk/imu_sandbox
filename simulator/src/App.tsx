@@ -10,6 +10,7 @@ import { applyCalibration, type Angles } from './simulation/calibration'
 import { BleControls } from './ui/BleControls'
 import { ControlPanel } from './ui/ControlPanel'
 import { Diagnostics } from './ui/Diagnostics'
+import { HeadCameraView } from './ui/HeadCameraView'
 import { ScreenPreview } from './ui/ScreenPreview'
 
 const DEFAULT_ANGLES: Angles = { yawDeg: 0, pitchDeg: 0, rollDeg: 0 }
@@ -181,6 +182,8 @@ function App() {
           />
         </div>
       </section>
+
+      <HeadCameraView orientation={orientation} screen={screen} />
 
       <ScreenPreview
         rawCursor={rawCursor}
