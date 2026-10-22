@@ -1,8 +1,10 @@
 type ControlPanelProps = {
+  simulating: boolean
   onReset: () => void
+  onToggleSimulation: () => void
 }
 
-export function ControlPanel({ onReset }: ControlPanelProps) {
+export function ControlPanel({ simulating, onReset, onToggleSimulation }: ControlPanelProps) {
   return (
     <section className="panel-card">
       <div className="card-header">
@@ -15,6 +17,9 @@ export function ControlPanel({ onReset }: ControlPanelProps) {
       <div className="button-row">
         <button type="button" className="secondary-button" onClick={onReset}>
           Reset
+        </button>
+        <button type="button" onClick={onToggleSimulation}>
+          {simulating ? 'Stop simulation' : 'Simulate head tilt'}
         </button>
       </div>
     </section>

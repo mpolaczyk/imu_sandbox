@@ -51,7 +51,7 @@ export const USE_ACCELERATION_TRACKER = false
 export const SENSOR_OFFSET = new Vector3(0, 6, -6)
 
 /** Defaults for the accelerometer position tracker. */
-export const DEFAULT_TRACKER_OPTIONS: PositionTrackerOptions = {
+export const DEFAULT_TRACKER_OPTIONS: PositionTrackerOptions = {                 
   warmupSamples: 25,
   accelDeadbandMps2: 0.08,
   stationarySamples: 10,
@@ -59,3 +59,7 @@ export const DEFAULT_TRACKER_OPTIONS: PositionTrackerOptions = {
   velocityDamping: 1.5,
   maxOffsetM: 0.3,
 }
+
+/** Simulation mode: head rolls +/- SIMULATION_TILT_DEG with a sine of period SIMULATION_PERIOD_S. */
+export const SIMULATION_TILT_DEG = 36
+export const SIMULATION_PERIOD_S = 5

@@ -5,11 +5,13 @@ import {
   MONITOR_HEIGHT_M,
   MONITOR_WIDTH_M,
   SCENE_ORIGIN_OFFSET,
+  SIMULATION_PERIOD_S,
+  SIMULATION_TILT_DEG,
   USE_ACCELERATION_TRACKER,
 } from './config'
 import { createScreen } from './math/headPointer'
 import { PositionTracker } from './math/positionTracker'
-import { relativeImuOrientation, relativeImuTranslation } from './math/orientation'
+import { headQuaternion, relativeImuOrientation, relativeImuTranslation } from './math/orientation'
 import { BlePoseClient, type PosePacket, type PoseStats } from './ble/ble-client'
 import { BleControls } from './ui/BleControls'
 import { ControlPanel } from './ui/ControlPanel'
@@ -39,6 +41,22 @@ function App() {
   const [bleConnected, setBleConnected] = useState(false)
   const [bleStats, setBleStats] = useState(DEFAULT_POSE_STATS)
   const [bleError, setBleError] = useState('')
+  const [simulating, setSimulating] = useState(false)
+  const [simulatedOrientation, setSimulatedOrientation] = useState<Quaternion | null>(null)
+
+  useEffect(() => {
+    if (!simulating) {
+      setSimulatedOrientation(null)
+      return
+    }
+    const startMs = performance.now()
+    let frame = requestAnimationFrame(function tick(nowMs) {
+      const phase = (2 * Math.PI * (nowMs - startMs)) / 1000 / SIMULATION_PERIOD_S
+      setSimulatedOrientation(headQuaternion(0, 0, SIMULATION_TILT_DEG * Math.sin(phase)))
+      frame = requestAnimationFrame(tick)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [simulating])
 
   const resetTracking = useCallback(() => {
     tracker.reset()
@@ -95,7 +113,7 @@ function App() {
     const deviceOrientation = poseQuaternion(livePose)
     return relativeImuOrientation(deviceOrientation, liveReference)
   }, [livePose, liveReference])
-  const orientation = liveOrientation ?? NEUTRAL_ORIENTATION
+  const orientation = simulatedOrientation ?? liveOrientation ?? NEUTRAL_ORIENTATION
 
   const handleReset = () => {
     const current = livePose ? poseQuaternion(livePose) : null
@@ -121,14 +139,20 @@ function App() {
             onConnect={() => void client.reconnect()}
             onDisconnect={() => client.disconnect()}
           />
-          <ControlPanel onReset={handleReset} />
+          <ControlPanel
+            simulating={simulating}
+            onReset={handleReset}
+            onToggleSimulation={() => setSimulating((value) => !value)}
+          />
         </div>
       </section>
 
       <HeadCameraView
         orientation={orientation}
         screen={MONITOR}
-        translation={USE_ACCELERATION_TRACKER ? (livePosition ?? undefined) : undefined}
+        translation={
+          USE_ACCELERATION_TRACKER && !simulating ? (livePosition ?? undefined) : undefined
+        }
       />
     </main>
   )
