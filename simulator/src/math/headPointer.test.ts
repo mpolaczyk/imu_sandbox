@@ -4,7 +4,8 @@ import { createScreen, intersectNoseRayWithScreen } from './headPointer'
 import { headQuaternion } from './orientation'
 
 const nose = new Vector3(0, 0, 0)
-const screen = createScreen()
+const monitor = { widthM: 0.531, heightM: 0.299 }
+const screen = createScreen({ distanceM: 0.6, ...monitor })
 
 describe('intersectNoseRayWithScreen', () => {
   it('centers the cursor for a neutral head pose', () => {
@@ -40,8 +41,8 @@ describe('intersectNoseRayWithScreen', () => {
   })
 
   it('scales physical hit distance with monitor distance', () => {
-    const nearHit = intersectNoseRayWithScreen(nose, headQuaternion(10, 0, 0), createScreen({ distanceM: 0.6 }))
-    const farHit = intersectNoseRayWithScreen(nose, headQuaternion(10, 0, 0), createScreen({ distanceM: 1.0 }))
+    const nearHit = intersectNoseRayWithScreen(nose, headQuaternion(10, 0, 0), createScreen({ distanceM: 0.6, ...monitor }))
+    const farHit = intersectNoseRayWithScreen(nose, headQuaternion(10, 0, 0), createScreen({ distanceM: 1.0, ...monitor }))
 
     expect(nearHit).not.toBeNull()
     expect(farHit).not.toBeNull()

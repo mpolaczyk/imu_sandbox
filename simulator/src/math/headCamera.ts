@@ -1,14 +1,11 @@
 import { Matrix4, Quaternion, Vector3 } from 'three'
+import { EYE_OFFSET, NECK_PIVOT } from '../config'
 import type { Screen } from './headPointer'
 
-/** Rotation centre (neck) relative to the neutral eye position, in metres. */
-export const NECK_PIVOT = new Vector3(0, -0.27, 0.1)
-/** Eye position relative to the neck pivot in the head frame (forward is -Z). */
-export const EYE_OFFSET = new Vector3(0, 0.20, -0.1)
-
-/** Eye position in screen space: an arc around the neck pivot. Neutral pose puts the eye at the origin. */
-export function eyePosition(orientation: Quaternion): Vector3 {
-  return EYE_OFFSET.clone().applyQuaternion(orientation).add(NECK_PIVOT)
+/** Eye position in screen space: an arc around the neck pivot, plus optional tracked translation (scene frame). */
+export function eyePosition(orientation: Quaternion, translation?: Vector3): Vector3 {
+  const eye = EYE_OFFSET.clone().applyQuaternion(orientation).add(NECK_PIVOT)
+  return translation ? eye.add(translation) : eye
 }
 
 /**
@@ -21,7 +18,7 @@ export function offAxisProjection(
   eye: Vector3,
   screen: Screen,
   near = 0.05,
-  far = 50,
+  far = 5,
 ): Matrix4 | null {
   const distance = screen.center.z - eye.z
   if (-distance <= 1e-4) {

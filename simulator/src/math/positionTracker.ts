@@ -1,4 +1,5 @@
 import { Quaternion, Vector3 } from 'three'
+import { DEFAULT_TRACKER_OPTIONS } from '../config'
 
 export type PositionTrackerOptions = {
   /** Samples averaged right after a reset to estimate gravity (device must be still). */
@@ -13,15 +14,6 @@ export type PositionTrackerOptions = {
   velocityDamping: number
   /** Maximum displacement from the origin in metres per axis. */
   maxOffsetM: number
-}
-
-export const DEFAULT_TRACKER_OPTIONS: PositionTrackerOptions = {
-  warmupSamples: 25,
-  accelDeadbandMps2: 0.08,
-  stationarySamples: 10,
-  recenterTimeS: 1.5,
-  velocityDamping: 1.5,
-  maxOffsetM: 0.3,
 }
 
 /**

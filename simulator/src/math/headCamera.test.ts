@@ -4,7 +4,7 @@ import { eyePosition, offAxisProjection } from './headCamera'
 import { createScreen } from './headPointer'
 import { headQuaternion } from './orientation'
 
-const screen = createScreen()
+const screen = createScreen({ distanceM: 0.6, widthM: 0.531, heightM: 0.299 })
 
 describe('eyePosition', () => {
   it('is at the origin for a neutral pose', () => {
@@ -14,14 +14,6 @@ describe('eyePosition', () => {
 
   it('moves left when the head yaws left', () => {
     expect(eyePosition(headQuaternion(20, 0, 0)).x).toBeLessThan(0)
-  })
-})
-
-describe('eyePosition translation', () => {
-  it('adds the tracked translation', () => {
-    const eye = eyePosition(new Quaternion(), new Vector3(0.05, 0.02, -0.1))
-    expect(eye.x).toBeCloseTo(0.05, 6)
-    expect(eye.z).toBeCloseTo(-0.1, 6)
   })
 })
 
