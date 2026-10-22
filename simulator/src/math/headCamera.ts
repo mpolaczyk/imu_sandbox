@@ -1,10 +1,10 @@
 import { Matrix4, Quaternion, Vector3 } from 'three'
-import { EYE_OFFSET, NECK_PIVOT } from '../config'
+import { EYE_OFFSET, NECK_PIVOT_POSITION } from '../config'
 import type { Screen } from './headPointer'
 
-/** Eye position in screen space: an arc around the neck pivot, plus optional tracked translation (scene frame). */
+/** Eye position in monitor space: an arc around the neck pivot, plus optional tracked translation. */
 export function eyePosition(orientation: Quaternion, translation?: Vector3): Vector3 {
-  const eye = EYE_OFFSET.clone().applyQuaternion(orientation).add(NECK_PIVOT)
+  const eye = EYE_OFFSET.clone().applyQuaternion(orientation).add(NECK_PIVOT_POSITION)
   return translation ? eye.add(translation) : eye
 }
 

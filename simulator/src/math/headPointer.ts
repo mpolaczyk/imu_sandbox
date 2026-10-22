@@ -20,17 +20,18 @@ export type CursorHit = {
 const FORWARD = new Vector3(0, 0, -1)
 
 export function createScreen(options: {
-  distanceM: number
   widthM: number
   heightM: number
-  /** Neutral eye height as a fraction of the screen height from the bottom edge. */
-  eyeHeightRatio?: number
+  originOffset?: Vector3
 }): Screen {
-  const { distanceM, widthM, heightM } = options
-  const eyeHeightRatio = options.eyeHeightRatio ?? 0.5
+  const { widthM, heightM, originOffset } = options
+  const center = new Vector3(0, heightM / 2, 0)
+  if (originOffset) {
+    center.add(originOffset)
+  }
 
   return {
-    center: new Vector3(0, (0.5 - eyeHeightRatio) * heightM, -distanceM),
+    center,
     normal: new Vector3(0, 0, -1),
     right: new Vector3(1, 0, 0),
     up: new Vector3(0, 1, 0),

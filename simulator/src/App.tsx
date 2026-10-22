@@ -2,10 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Quaternion, Vector3 } from 'three'
 import './App.css'
 import {
-  MONITOR_DISTANCE_M,
   MONITOR_HEIGHT_M,
   MONITOR_WIDTH_M,
-  NEUTRAL_EYE_HEIGHT_RATIO,
+  SCENE_ORIGIN_OFFSET,
   USE_ACCELERATION_TRACKER,
 } from './config'
 import { createScreen } from './math/headPointer'
@@ -17,10 +16,9 @@ import { ControlPanel } from './ui/ControlPanel'
 import { HeadCameraView } from './ui/HeadCameraView'
 
 const MONITOR = createScreen({
-  distanceM: MONITOR_DISTANCE_M,
   widthM: MONITOR_WIDTH_M,
   heightM: MONITOR_HEIGHT_M,
-  eyeHeightRatio: NEUTRAL_EYE_HEIGHT_RATIO,
+  originOffset: SCENE_ORIGIN_OFFSET,
 })
 const NEUTRAL_ORIENTATION = new Quaternion()
 const DEFAULT_POSE_STATS: PoseStats = { packetRate: 0, droppedPackets: 0 }
