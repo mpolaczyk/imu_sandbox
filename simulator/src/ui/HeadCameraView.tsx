@@ -1,6 +1,7 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { useMemo, useRef } from 'react'
-import { BackSide, type DirectionalLight, type Quaternion, type Vector3 } from 'three'
+import { BackSide, type DirectionalLight, type Quaternion, Vector3 } from 'three'
+import { FOCUS_BLEND, FOCUS_MODE } from '../config'
 import { eyePosition, offAxisProjection } from '../math/headCamera'
 import type { Screen } from '../math/headPointer'
 
@@ -13,10 +14,14 @@ type HeadCameraViewProps = {
 function HeadCamera({ orientation, screen, translation }: HeadCameraViewProps) {
   const camera = useThree((state) => state.camera)
   const eye = useMemo(() => eyePosition(orientation, translation), [orientation, translation])
+  const focusPoint = useMemo(() => farthestObjectPosition(screen), [screen])
   const headlight = useRef<DirectionalLight>(null)
 
   useFrame(() => {
-    const projection = offAxisProjection(eye, screen)
+    const projection = offAxisProjection(eye, screen, undefined, undefined, {
+      point: FOCUS_MODE === 'infinity' ? undefined : focusPoint,
+      blend: FOCUS_BLEND,
+    })
     if (projection === null) {
       return
     }
@@ -45,7 +50,7 @@ function HeadCamera({ orientation, screen, translation }: HeadCameraViewProps) {
       shadow-camera-top={0.4}
       shadow-camera-bottom={-0.4}
       shadow-camera-near={0.01}
-      shadow-camera-far={1.5}
+      shadow-camera-far={3}
       shadow-bias={-0.0002}
       shadow-normalBias={0.002}
       shadow-radius={4}
@@ -53,7 +58,7 @@ function HeadCamera({ orientation, screen, translation }: HeadCameraViewProps) {
   )
 }
 
-const ROOM_DEPTH_M = 0.5
+const ROOM_DEPTH_M = 1
 const WALL_WHITE = '#9ca3af'
 // BoxGeometry face order: +x, -x, +y, -y, +z, -z. The +z face (towards the viewer) is culled, leaving the screen as an opening.
 const WALL_COLORS = ['#22c55e', '#ef4444', WALL_WHITE, WALL_WHITE, WALL_WHITE, WALL_WHITE]
@@ -75,13 +80,13 @@ type RoomObject = {
   shape: Shape
 }
 
-// x/z are relative to the room centre.
+// x/z are relative to the room centre (z > 0 is towards the screen); keep objects inside the 0.32 m wide room.
 const ROOM_OBJECTS: RoomObject[] = [
-  { x: -0.17, z: -0.1, lift: 0.08, rotY: 0, color: '#f97316', shape: { kind: 'cone', radius: 0.06, height: 0.16 } },
-  { x: 0.0, z: -0.14, lift: 0.055, rotY: 0, color: '#eab308', shape: { kind: 'cylinder', radius: 0.045, height: 0.11 } },
-  { x: 0.15, z: -0.02, lift: 0.07, rotY: 0, color: '#3b82f6', shape: { kind: 'sphere', radius: 0.07 } },
-  { x: -0.05, z: 0.06, lift: 0.07, rotY: 0.5, color: '#a855f7', shape: { kind: 'torusKnot', radius: 0.04, tube: 0.013 } },
-  { x: 0.1, z: 0.12, lift: 0.03, rotY: -0.4, color: '#14b8a6', shape: { kind: 'box', width: 0.08, height: 0.06, depth: 0.08 } },
+  { x: -0.09, z: -0.1, lift: 0.08, rotY: 0, color: '#f97316', shape: { kind: 'cone', radius: 0.06, height: 0.16 } },
+  { x: 0.0, z: -0.42, lift: 0.055, rotY: 0, color: '#eab308', shape: { kind: 'cylinder', radius: 0.045, height: 0.11 } },
+  { x: 0.08, z: 0.1, lift: 0.07, rotY: 0, color: '#3b82f6', shape: { kind: 'sphere', radius: 0.04 } },
+  //{ x: -0.10, z: -0.1, lift: 0.07, rotY: 0.5, color: '#a855f7', shape: { kind: 'torusKnot', radius: 0.04, tube: 0.013 } },
+  { x: 0.07, z: 0.38, lift: 0.03, rotY: -0.4, color: '#14b8a6', shape: { kind: 'box', width: 0.04, height: 0.06, depth: 0.08 } },
 ]
 
 function ShapeGeometry({ shape }: { shape: Shape }) {
@@ -99,11 +104,24 @@ function ShapeGeometry({ shape }: { shape: Shape }) {
   }
 }
 
+function objectPosition(object: RoomObject, screen: Screen): Vector3 {
+  const { heightM: h, center } = screen
+  const roomZ = center.z - ROOM_DEPTH_M / 2
+  const floorY = center.y - h / 2
+  return new Vector3(center.x + object.x, floorY + object.lift, roomZ + object.z)
+}
+
+/** Used as the frustum focus: the object deepest behind the screen. */
+function farthestObjectPosition(screen: Screen): Vector3 {
+  return ROOM_OBJECTS.map((object) => objectPosition(object, screen)).reduce((far, position) =>
+    position.z < far.z ? position : far,
+  )
+}
+
 function World({ screen }: { screen: Screen }) {
   const { widthM: w, heightM: h, center } = screen
   const d = ROOM_DEPTH_M
   const roomZ = center.z - d / 2
-  const floorY = center.y - h / 2
   return (
     <>
       <color attach="background" args={['#020617']} />
@@ -124,7 +142,7 @@ function World({ screen }: { screen: Screen }) {
       {ROOM_OBJECTS.map((object, index) => (
         <mesh
           key={index}
-          position={[center.x + object.x, floorY + object.lift, roomZ + object.z]}
+          position={objectPosition(object, screen).toArray()}
           rotation={[0, object.rotY, 0]}
           castShadow
           receiveShadow

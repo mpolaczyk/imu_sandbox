@@ -63,3 +63,9 @@ export const DEFAULT_TRACKER_OPTIONS: PositionTrackerOptions = {
 /** Simulation mode: head rolls +/- SIMULATION_TILT_DEG with a sine of period SIMULATION_PERIOD_S. */
 export const SIMULATION_TILT_DEG = 36
 export const SIMULATION_PERIOD_S = 5
+
+/** 0 = pure window projection; 1 = frustum axis aims at the farthest object in the room. */
+export const FOCUS_BLEND = 0
+
+/** What the frustum axis aims at when FOCUS_BLEND > 0: the farthest object, or a point at infinity straight ahead. */
+export const FOCUS_MODE: 'farthest-object' | 'infinity' = 'infinity'

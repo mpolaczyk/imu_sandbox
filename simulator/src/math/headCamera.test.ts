@@ -42,6 +42,25 @@ describe('offAxisProjection', () => {
     expect(ndc.y).toBeCloseTo(1, 5)
   })
 
+  it('centres the frustum axis on the focus point when blend is 1', () => {
+    const eye = new Vector3(0.1, eyeLevelY + 0.05, eyeDistance)
+    const focus = new Vector3(-0.05, 0.03, -0.4)
+    const m = offAxisProjection(eye, screen, 0.05, 5, { point: focus, blend: 1 })!
+    const ndc = focus.clone().sub(eye).applyMatrix4(m)
+    expect(ndc.x).toBeCloseTo(0, 5)
+    expect(ndc.y).toBeCloseTo(0, 5)
+  })
+
+  it('matches the plain window projection when blend is 0', () => {
+    const eye = new Vector3(0.1, eyeLevelY, eyeDistance)
+    const plain = offAxisProjection(eye, screen)!
+    const blended = offAxisProjection(eye, screen, 0.05, 5, {
+      point: new Vector3(0, 0, -0.4),
+      blend: 0,
+    })!
+    expect(blended.elements).toEqual(plain.elements)
+  })
+
   it('returns null when the eye is behind the screen plane', () => {
     expect(offAxisProjection(new Vector3(0, eyeLevelY, -1), screen)).toBeNull()
   })
